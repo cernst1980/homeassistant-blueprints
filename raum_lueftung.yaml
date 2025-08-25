@@ -1,6 +1,6 @@
 blueprint:
-  name: "Raumlüftungsempfehlung Komplett (Feuchte + CO₂ + Anwesenheit über Personen, optional Fenster)"
-  description: "Raumweise Lüftungsempfehlung und Fenster-Schließen-Empfehlung basierend auf relativer und absoluter Luftfeuchtigkeit, optional CO₂, Fensterstatus, Personenanwesenheit, Sommer-/Winterlogik und Smart Reset."
+  name: "Raumlüftungsempfehlung Komplett (Feuchte + CO₂ + Personen + Fenster)"
+  description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit, optional CO₂, Fensterstatus und Personenanwesenheit."
   domain: automation
 
   input:
@@ -124,6 +124,9 @@ variables:
   min_vent_duration: !input min_vent_duration
   repeat_interval: !input repeat_interval
   critical_push: !input critical_push
+  create_status_entity: !input create_status_entity
+  time_start: !input time_start
+  time_end: !input time_end
 
 trigger:
   - platform: state
@@ -175,7 +178,7 @@ variables:
     {% endif %}
   within_time: >
     {% set now_time = now().strftime('%H:%M') %}
-    {{ now_time >= !input('time_start') and now_time <= !input('time_end') }}
+    {{ now_time >= time_start and now_time <= time_end }}
   should_vent: >
     {{ within_time and someone_home and not summer_block and (high_humidity or bad_co2) and not window_open }}
   should_close: >
@@ -216,12 +219,18 @@ action:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
               title: "{% if not critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
   - choose:
-      - conditions: "{{ !input('create_status_entity') }}"
-        sequence: []
-      - conditions: "{{ not !input('create_status_entity') }}"
+      - conditions: "{{ create_status_entity }}"
         sequence:
           - service: input_text.set_value
             data:
               entity_id: input_text.lueftung_status
               value: >
-                {% if should_vent %}Lüften empfohlen{% elif should_close %}Schließen empfohlen{% elif warn_window_open_absent %}Fenster offen{% else %}Keine Aktion{% endif %}
+                {% if should_vent %}
+                  Lüften empfohlen
+                {% elif should_close %}
+                  Schließen empfohlen
+                {% elif warn_window_open_absent %}
+                  Fenster offen
+                {% else %}
+                  Keine Aktion
+                {% endif %}
