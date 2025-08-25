@@ -1,5 +1,5 @@
 blueprint:
-  name: "Raumlüftungsempfehlung (Feuchte + CO₂ + Fenster + Anwesenheit)"
+  name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
   description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit, optional CO₂, unter Berücksichtigung von Fensterstatus und Personenanwesenheit."
   domain: automation
 
@@ -92,22 +92,22 @@ blueprint:
       name: "Start Zeitfenster"
       default: "06:00"
       selector:
-        time
+        time:
     time_end:
       name: "End Zeitfenster"
       default: "22:00"
       selector:
-        time
+        time:
     critical_push:
       name: "Kritische Push-Nachricht aktivieren?"
       default: false
       selector:
-        boolean
+        boolean:
     create_status_entity:
       name: "Status-Entity erstellen?"
       default: false
       selector:
-        boolean
+        boolean:
 
 mode: restart
 
