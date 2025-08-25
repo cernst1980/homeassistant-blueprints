@@ -43,11 +43,6 @@ blueprint:
           domain: sensor
           device_class: carbon_dioxide
           multiple: false
-    notify_service:
-      name: "Notify-Service (z. B. mobile_app)"
-      selector:
-        action:
-          service: notify
     threshold_relative:
       name: "Rel. LF-Schwelle (%)"
       default: 60
@@ -118,7 +113,6 @@ variables:
   sensor_windows: !input window_sensors
   sensor_persons: !input presence_persons
   sensor_co2: !input co2_sensor
-  notify_service: !input notify_service
   threshold_relative: !input threshold_relative
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
@@ -193,7 +187,7 @@ action:
   - choose:
       - conditions: "{{ should_vent }}"
         sequence:
-          - service: !input notify_service
+          - action: notify.mobile_app_iphone_von_chris
             data:
               message: >
                 Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
@@ -204,14 +198,14 @@ action:
         sequence:
           - delay:
               minutes: "{{ min_vent_duration }}"
-          - service: !input notify_service
+          - action: notify.mobile_app_iphone_von_chris
             data:
               message: >
                 Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³
               title: "{% if not critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - service: !input notify_service
+          - action: notify.mobile_app_iphone_von_chris
             data:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
               title: "{% if not critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
