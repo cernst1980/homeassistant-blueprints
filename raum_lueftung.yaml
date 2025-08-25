@@ -27,11 +27,11 @@ blueprint:
           domain: binary_sensor
           device_class: window
           multiple: true
-    notify_device:
-      name: "Benachrichtigungsgerät"
+    notify_service:
+      name: "Notify-Service (z. B. mobile_app)"
       selector:
-        device:
-          integration: mobile_app
+        action:
+          service: notify
     presence_persons:
       name: "Personen zur Anwesenheit"
       default: []
@@ -96,17 +96,17 @@ blueprint:
       name: "Status-Entity erstellen?"
       default: false
       selector:
-        boolean:
+        boolean
     time_start:
       name: "Start Zeitfenster"
       default: "06:00"
       selector:
-        time:
+        time
     time_end:
       name: "End Zeitfenster"
       default: "22:00"
       selector:
-        time:
+        time
 
 mode: restart
 
@@ -115,7 +115,7 @@ variables:
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
   sensor_windows: !input window_sensors
-  sensor_notify: !input notify_device
+  notify_service: !input notify_service
   sensor_persons: !input presence_persons
   sensor_co2: !input co2_sensor
   threshold_relative: !input threshold_relative
@@ -190,12 +190,10 @@ action:
   - choose:
       - conditions: "{{ should_vent }}"
         sequence:
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
+          - service: !input notify_service
             data:
               message: >
-                "Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³, CO₂: {% if sensor_co2 != '' %}{{ co2 | round(0) }} ppm{% else %}nicht gemessen{% endif %}"
+                Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               title: "{% if not critical_push %}Lüften{% else %}Lüften (kritisch){% endif %}"
           - delay:
               minutes: "{{ repeat_interval }}"
@@ -203,21 +201,18 @@ action:
         sequence:
           - delay:
               minutes: "{{ min_vent_duration }}"
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
+          - service: !input notify_service
             data:
               message: >
-                "Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³"
+                Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³
               title: "{% if not critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
+          - service: !input notify_service
             data:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
               title: "{% if not critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
+
   - choose:
       - conditions: "{{ create_status_entity }}"
         sequence:
