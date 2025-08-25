@@ -183,8 +183,7 @@ action:
             data:
               message: >
                 "Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³, CO₂: {% if !input.co2_sensor != '' %}{{ co2 | round(0) }} ppm{% else %}nicht gemessen{% endif %}"
-              title: >
-                {% if not !input.critical_push %}Lüften{% else %}Lüften (kritisch){% endif %}
+              title: "{% if not !input.critical_push %}Lüften{% else %}Lüften (kritisch){% endif %}"
           - delay:
               minutes: !input.repeat_interval
           - continue_on_error: true
@@ -198,8 +197,7 @@ action:
             data:
               message: >
                 "Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³"
-              title: >
-                {% if not !input.critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}
+              title: "{% if not !input.critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
           - device_id: !input.notify_device
@@ -207,8 +205,7 @@ action:
             type: notify
             data:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
-              title: >
-                {% if not !input.critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}
+              title: "{% if not !input.critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
   - choose:
       - conditions: "{{ !input.create_status_entity }}"
         sequence: []
