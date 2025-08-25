@@ -151,7 +151,7 @@ variables:
   should_vent: >
     {{ within_time and someone_home and not summer_block and (high_humidity or bad_co2) and not window_open }}
   should_close: >
-    {{ window_open and (diff < 1 or rh_in < 55 or abs_in > abs_out) }}
+    {{ window_open and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
   warn_window_open_absent: >
     {{ not someone_home and window_open and (sensor_windows | length > 0) }}
 
