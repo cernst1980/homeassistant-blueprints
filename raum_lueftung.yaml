@@ -130,17 +130,17 @@ variables:
 
 trigger:
   - platform: state
-    entity_id: "{{ sensor_humidity }}"
+    entity_id: !input indoor_humidity
   - platform: state
-    entity_id: "{{ sensor_absolute }}"
+    entity_id: !input indoor_absolute
   - platform: state
-    entity_id: "{{ sensor_outdoor }}"
+    entity_id: !input outdoor_absolute
   - platform: state
-    entity_id: "{{ sensor_windows }}"
+    entity_id: !input window_sensors
   - platform: state
-    entity_id: "{{ sensor_co2 }}"
+    entity_id: !input co2_sensor
   - platform: state
-    entity_id: "{{ sensor_persons }}"
+    entity_id: !input presence_persons
 
 variables:
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
@@ -190,7 +190,7 @@ action:
   - choose:
       - conditions: "{{ should_vent }}"
         sequence:
-          - device_id: "{{ sensor_notify }}"
+          - device_id: !input notify_device
             domain: mobile_app
             type: notify
             data:
@@ -203,7 +203,7 @@ action:
         sequence:
           - delay:
               minutes: "{{ min_vent_duration }}"
-          - device_id: "{{ sensor_notify }}"
+          - device_id: !input notify_device
             domain: mobile_app
             type: notify
             data:
@@ -212,7 +212,7 @@ action:
               title: "{% if not critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - device_id: "{{ sensor_notify }}"
+          - device_id: !input notify_device
             domain: mobile_app
             type: notify
             data:
