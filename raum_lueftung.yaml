@@ -116,41 +116,50 @@ blueprint:
 
 mode: restart
 
+variables:
+  sensor_humidity: !input indoor_humidity
+  sensor_absolute: !input indoor_absolute
+  sensor_outdoor: !input outdoor_absolute
+  sensor_windows: !input window_sensors
+  sensor_notify: !input notify_device
+  sensor_presence: !input presence_sensor
+  sensor_co2: !input co2_sensor
+
 trigger:
   - platform: state
-    entity_id: "{{ !input('indoor_humidity') }}"
+    entity_id: "{{ sensor_humidity }}"
   - platform: state
-    entity_id: "{{ !input('indoor_absolute') }}"
+    entity_id: "{{ sensor_absolute }}"
   - platform: state
-    entity_id: "{{ !input('outdoor_absolute') }}"
+    entity_id: "{{ sensor_outdoor }}"
   - platform: state
-    entity_id: "{{ !input('window_sensors') }}"
+    entity_id: "{{ sensor_windows }}"
   - platform: state
-    entity_id: "{{ !input('co2_sensor') }}"
+    entity_id: "{{ sensor_co2 }}"
   - platform: state
-    entity_id: "{{ !input('presence_sensor') }}"
+    entity_id: "{{ sensor_presence }}"
 
 variables:
-  rh_in: "{{ states(!input('indoor_humidity')) | float(0) }}"
-  abs_in: "{{ states(!input('indoor_absolute')) | float(0) }}"
-  abs_out: "{{ states(!input('outdoor_absolute')) | float(0) }}"
+  rh_in: "{{ states(sensor_humidity) | float(0) }}"
+  abs_in: "{{ states(sensor_absolute) | float(0) }}"
+  abs_out: "{{ states(sensor_outdoor) | float(0) }}"
   diff: "{{ abs_in - abs_out }}"
   co2: >
-    {% if !input('co2_sensor') != '' %}
-      {{ states(!input('co2_sensor')) | float(0) }}
+    {% if sensor_co2 != '' %}
+      {{ states(sensor_co2) | float(0) }}
     {% else %}
       0
     {% endif %}
   window_open: >
-    {% if !input('window_sensors') | length > 0 %}
-      {{ expand(!input('window_sensors')) | selectattr('state','eq','on') | list | count > 0 }}
+    {% if sensor_windows | length > 0 %}
+      {{ expand(sensor_windows) | selectattr('state','eq','on') | list | count > 0 }}
     {% else %}
       false
     {% endif %}
   high_humidity: >
     {{ rh_in > (!input('threshold_relative') | float) and diff > (!input('threshold_difference') | float) }}
   bad_co2: >
-    {% if !input('co2_sensor') != '' %}
+    {% if sensor_co2 != '' %}
       {{ co2 > (!input('co2_threshold') | float) }}
     {% else %}
       false
@@ -158,8 +167,8 @@ variables:
   summer_block: >
     {{ abs_out > 14 and abs_out >= abs_in }}
   someone_home: >
-    {% if !input('presence_sensor') != '' %}
-      {{ states(!input('presence_sensor')) == 'on' }}
+    {% if sensor_presence != '' %}
+      {{ states(sensor_presence) == 'on' }}
     {% else %}
       true
     {% endif %}
@@ -171,18 +180,18 @@ variables:
   should_close: >
     {{ window_open and (diff < 1 or rh_in < 55 or abs_in > abs_out) }}
   warn_window_open_absent: >
-    {{ not someone_home and window_open and (!input('window_sensors') | length > 0) }}
+    {{ not someone_home and window_open and (sensor_windows | length > 0) }}
 
 action:
   - choose:
       - conditions: "{{ should_vent }}"
         sequence:
-          - device_id: "{{ !input('notify_device') }}"
+          - device_id: "{{ sensor_notify }}"
             domain: mobile_app
             type: notify
             data:
               message: >
-                "Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³, CO₂: {% if !input('co2_sensor') != '' %}{{ co2 | round(0) }} ppm{% else %}nicht gemessen{% endif %}"
+                "Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³, CO₂: {% if sensor_co2 != '' %}{{ co2 | round(0) }} ppm{% else %}nicht gemessen{% endif %}"
               title: "{% if not !input('critical_push') %}Lüften{% else %}Lüften (kritisch){% endif %}"
           - delay:
               minutes: "{{ !input('repeat_interval') }}"
@@ -191,7 +200,7 @@ action:
         sequence:
           - delay:
               minutes: "{{ !input('min_vent_duration') }}"
-          - device_id: "{{ !input('notify_device') }}"
+          - device_id: "{{ sensor_notify }}"
             domain: mobile_app
             type: notify
             data:
@@ -200,7 +209,7 @@ action:
               title: "{% if not !input('critical_push') %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - device_id: "{{ !input('notify_device') }}"
+          - device_id: "{{ sensor_notify }}"
             domain: mobile_app
             type: notify
             data:
