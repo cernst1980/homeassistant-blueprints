@@ -109,22 +109,7 @@ variables:
   repeat_interval: !input repeat_interval
   time_start: !input time_start
   time_end: !input time_end
-
-trigger:
-  - platform: state
-    entity_id: !input indoor_humidity
-  - platform: state
-    entity_id: !input indoor_absolute
-  - platform: state
-    entity_id: !input outdoor_absolute
-  - platform: state
-    entity_id: !input window_sensors
-  - platform: state
-    entity_id: !input presence_persons
-  - platform: state
-    entity_id: !input co2_sensor
-
-variables:
+  
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
@@ -169,6 +154,20 @@ variables:
     {{ window_open and (diff < 1 or rh_in < 55 or abs_in > abs_out) }}
   warn_window_open_absent: >
     {{ not someone_home and window_open and (sensor_windows | length > 0) }}
+
+trigger:
+  - platform: state
+    entity_id: !input indoor_humidity
+  - platform: state
+    entity_id: !input indoor_absolute
+  - platform: state
+    entity_id: !input outdoor_absolute
+  - platform: state
+    entity_id: !input window_sensors
+  - platform: state
+    entity_id: !input presence_persons
+  - platform: state
+    entity_id: !input co2_sensor
 
 action:
   - choose:
