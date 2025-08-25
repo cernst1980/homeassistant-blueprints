@@ -42,7 +42,6 @@ blueprint:
         entity:
           domain: sensor
           device_class: carbon_dioxide
-          multiple: false
     threshold_relative:
       name: "Rel. LF-Schwelle (%)"
       default: 60
@@ -93,17 +92,7 @@ blueprint:
       default: "22:00"
       selector:
         time:
-    critical_push:
-      name: "Kritische Push-Nachricht aktivieren?"
-      default: false
-      selector:
-        boolean:
-    create_status_entity:
-      name: "Status-Entity erstellen?"
-      default: false
-      selector:
-        boolean:
-
+        
 mode: restart
 
 variables:
@@ -120,8 +109,6 @@ variables:
   repeat_interval: !input repeat_interval
   time_start: !input time_start
   time_end: !input time_end
-  critical_push: !input critical_push
-  create_status_entity: !input create_status_entity
 
 trigger:
   - platform: state
@@ -133,9 +120,9 @@ trigger:
   - platform: state
     entity_id: !input window_sensors
   - platform: state
-    entity_id: !input co2_sensor
-  - platform: state
     entity_id: !input presence_persons
+  - platform: state
+    entity_id: !input co2_sensor
 
 variables:
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
@@ -191,7 +178,7 @@ action:
             data:
               message: >
                 Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-              title: "{% if not critical_push %}Lüften{% else %}Lüften (kritisch){% endif %}"
+              title: "Lüften"
           - delay:
               minutes: "{{ repeat_interval }}"
       - conditions: "{{ should_close }}"
@@ -202,27 +189,10 @@ action:
             data:
               message: >
                 Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³
-              title: "{% if not critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
+              title: "Fenster schließen"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
           - action: notify.mobile_app_iphone_von_chris
             data:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
-              title: "{% if not critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
-
-  - choose:
-      - conditions: "{{ create_status_entity }}"
-        sequence:
-          - service: input_text.set_value
-            data:
-              entity_id: input_text.lueftung_status
-              value: >
-                {% if should_vent %}
-                  Lüften empfohlen
-                {% elif should_close %}
-                  Schließen empfohlen
-                {% elif warn_window_open_absent %}
-                  Fenster offen
-                {% else %}
-                  Keine Aktion
-                {% endif %}
+              title: "Fenster offen"
