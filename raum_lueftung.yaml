@@ -1,11 +1,11 @@
 blueprint:
-  name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
+  name: "Raumlüftungsempfehlung (Feuchte + CO₂ + Fenster + Anwesenheit)"
   description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit, optional CO₂, unter Berücksichtigung von Fensterstatus und Personenanwesenheit."
   domain: automation
 
   input:
     indoor_humidity:
-      name: "Relative Luftfeuchtigkeit Innen"
+      name: "Relative Luftfeuchtigkeit Innen (%)"
       selector:
         entity:
           domain: sensor
@@ -28,11 +28,6 @@ blueprint:
           domain: binary_sensor
           device_class: window
           multiple: true
-    notify_service:
-      name: "Notify-Service (z. B. mobile_app)"
-      selector:
-        action:
-          service: notify
     presence_persons:
       name: "Personen zur Anwesenheit"
       default: []
@@ -40,6 +35,19 @@ blueprint:
         entity:
           domain: person
           multiple: true
+    co2_sensor:
+      name: "Optionaler CO₂-Sensor"
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: carbon_dioxide
+          multiple: false
+    notify_service:
+      name: "Notify-Service (z. B. mobile_app)"
+      selector:
+        action:
+          service: notify
     threshold_relative:
       name: "Rel. LF-Schwelle (%)"
       default: 60
@@ -56,14 +64,6 @@ blueprint:
           min: 0
           max: 10
           step: 0.1
-    co2_sensor:
-      name: "Optionaler CO₂-Sensor"
-      default: ""
-      selector:
-        entity:
-          domain: sensor
-          device_class: carbon_dioxide
-          multiple: false
     co2_threshold:
       name: "CO₂-Schwelle (ppm)"
       default: 1200
@@ -88,16 +88,6 @@ blueprint:
           min: 5
           max: 120
           step: 5
-    critical_push:
-      name: "Kritische Push-Nachricht aktivieren?"
-      default: false
-      selector:
-        boolean:
-    create_status_entity:
-      name: "Status-Entity erstellen?"
-      default: false
-      selector:
-        boolean
     time_start:
       name: "Start Zeitfenster"
       default: "06:00"
@@ -108,6 +98,16 @@ blueprint:
       default: "22:00"
       selector:
         time
+    critical_push:
+      name: "Kritische Push-Nachricht aktivieren?"
+      default: false
+      selector:
+        boolean
+    create_status_entity:
+      name: "Status-Entity erstellen?"
+      default: false
+      selector:
+        boolean
 
 mode: restart
 
@@ -116,18 +116,18 @@ variables:
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
   sensor_windows: !input window_sensors
-  notify_service: !input notify_service
   sensor_persons: !input presence_persons
   sensor_co2: !input co2_sensor
+  notify_service: !input notify_service
   threshold_relative: !input threshold_relative
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
   min_vent_duration: !input min_vent_duration
   repeat_interval: !input repeat_interval
-  critical_push: !input critical_push
-  create_status_entity: !input create_status_entity
   time_start: !input time_start
   time_end: !input time_end
+  critical_push: !input critical_push
+  create_status_entity: !input create_status_entity
 
 trigger:
   - platform: state
@@ -161,10 +161,10 @@ variables:
       false
     {% endif %}
   high_humidity: >
-    {{ rh_in > threshold_relative | float and diff > threshold_difference | float }}
+    {{ rh_in > threshold_relative and diff > threshold_difference }}
   bad_co2: >
     {% if sensor_co2 != '' %}
-      {{ co2 > co2_threshold | float }}
+      {{ co2 > co2_threshold }}
     {% else %}
       false
     {% endif %}
@@ -178,8 +178,10 @@ variables:
       true
     {% endif %}
   within_time: >
-    {% set now_time = now().strftime('%H:%M') %}
-    {{ now_time >= time_start and now_time <= time_end }}
+    {% set now_time = now().time() %}
+    {% set start = strptime(time_start, '%H:%M').time() %}
+    {% set end = strptime(time_end, '%H:%M').time() %}
+    {{ start <= now_time <= end }}
   should_vent: >
     {{ within_time and someone_home and not summer_block and (high_humidity or bad_co2) and not window_open }}
   should_close: >
@@ -191,7 +193,7 @@ action:
   - choose:
       - conditions: "{{ should_vent }}"
         sequence:
-          - action: notify.mobile_app_iphone_von_chris
+          - service: !input notify_service
             data:
               message: >
                 Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
@@ -202,14 +204,14 @@ action:
         sequence:
           - delay:
               minutes: "{{ min_vent_duration }}"
-          - action: notify.mobile_app_iphone_von_chris
+          - service: !input notify_service
             data:
               message: >
                 Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF, Differenz: {{ diff | round(1) }} g/m³
               title: "{% if not critical_push %}Fenster schließen{% else %}Fenster schließen (kritisch){% endif %}"
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - action: notify.mobile_app_iphone_von_chris
+          - service: !input notify_service
             data:
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
               title: "{% if not critical_push %}Fenster offen{% else %}Fenster offen (kritisch){% endif %}"
