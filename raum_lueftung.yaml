@@ -240,7 +240,7 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
                     title: "Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
