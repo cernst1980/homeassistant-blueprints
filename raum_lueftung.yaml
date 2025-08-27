@@ -199,6 +199,9 @@ action:
                     message: >
                       Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                    data:
+                      push:
+                        interruption-level: time-sensitive
           - wait_template: "{{ not (should_close and vent_duration_passed) }}"
             timeout:
               minutes: "{{ repeat_interval }}"
@@ -216,6 +219,9 @@ action:
                     message: >
                       Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                    data:
+                      push:
+                        interruption-level: time-sensitive
           - wait_template: "{{ not should_vent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
@@ -231,6 +237,9 @@ action:
                   data:
                     title: "{{ area }} - Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
+                    data:
+                      push:
+                        interruption-level: time-sensitive
           - wait_template: "{{ not warn_window_open_absent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
