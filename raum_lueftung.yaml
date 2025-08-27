@@ -52,7 +52,7 @@ blueprint:
           step: 1
     threshold_difference:
       name: "Absolute LF-Differenz Schwelle (g/m³)"
-      default: 3
+      default: 2
       selector:
         number:
           min: 0
@@ -60,7 +60,7 @@ blueprint:
           step: 0.1
     co2_threshold:
       name: "CO₂-Schwelle (ppm)"
-      default: 1200
+      default: 1400
       selector:
         number:
           min: 400
@@ -76,7 +76,7 @@ blueprint:
           step: 1
     repeat_interval:
       name: "Wiederholintervall (Minuten)"
-      default: 30
+      default: 60
       selector:
         number:
           min: 5
@@ -113,6 +113,7 @@ variables:
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
+  
   diff: "{{ abs_in - abs_out }}"
   co2: >
     {% if sensor_co2 != '' %}
@@ -144,9 +145,9 @@ variables:
       true
     {% endif %}
   within_time: >
-    {% set now_time = now().time() %}
-    {% set start = strptime(time_start, '%H:%M').time() %}
-    {% set end = strptime(time_end, '%H:%M').time() %}
+    {% set now_time = now() %}
+    {% set start = today_at(time_start) %}
+    {% set end = today_at(time_end) %}
     {{ start <= now_time <= end }}
   should_vent: >
     {{ within_time and someone_home and not summer_block and (high_humidity or bad_co2) and not window_open }}
@@ -166,8 +167,6 @@ trigger:
     entity_id: !input window_sensors
   - platform: state
     entity_id: !input presence_persons
-  - platform: state
-    entity_id: !input co2_sensor
 
 action:
   - choose:
