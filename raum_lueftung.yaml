@@ -149,9 +149,15 @@ variables:
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
   # Entscheidung
-  should_vent: "{{ within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}"
-  should_close: "{{ (window_open or no_windows) and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}"
+  should_vent: >
+    {{ within_time and someone_home and (no_windows or not window_open) and
+       ((bad_co2) or (high_humidity and not summer_block)) }}
+
+  should_close: >
+    {{ (window_open or no_windows) and (diff < 1 or rh_in < 55 or abs_in < abs_out) and not bad_co2 }}
+
   warn_window_open_absent: "{{ not someone_home and window_open and not no_windows }}"
+
   vent_duration_passed: >
     {% if window_open and not no_windows %}
       {% set oldest = expand(sensor_windows) | selectattr('state','eq','on') | map(attribute='last_changed') | min %}
@@ -180,7 +186,7 @@ trigger:
 
 action:
   - choose:
-      # Fenster schließen → sofort
+      # Fenster schließen → sofort, nur wenn CO₂ nicht hoch
       - conditions: "{{ should_close and vent_duration_passed }}"
         sequence:
           - repeat:
@@ -192,13 +198,12 @@ action:
                     message: >
                       Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-
           - wait_template: "{{ not (should_close and vent_duration_passed) }}"
             timeout:
               minutes: "{{ repeat_interval }}"
             continue_on_timeout: true
 
-      # Lüften / Reminder
+      # Lüften / Reminder, CO₂ Vorrang
       - conditions: "{{ should_vent }}"
         sequence:
           - repeat:
@@ -210,7 +215,6 @@ action:
                     message: >
                       Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-
           - wait_template: "{{ not should_vent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
@@ -226,7 +230,6 @@ action:
                   data:
                     title: "{{ area }} - Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
-
           - wait_template: "{{ not warn_window_open_absent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
