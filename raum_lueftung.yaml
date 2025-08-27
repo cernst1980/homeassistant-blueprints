@@ -213,12 +213,17 @@ action:
               sequence:
                 - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
-                    title: "{{area}} - Fenster schließen"
+                    title: "{{ area }} - Fenster schließen"
                     message: >
                       Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-          - delay:
+
+          # Warten, bis sich die Bedingung für "Fenster schließen" ändert oder Timeout erreicht
+          - wait_template: >
+              {{ not (should_close and vent_duration_passed) }}
+            timeout:
               minutes: "{{ repeat_interval }}"
+            continue_on_timeout: true
 
       # Lüften / Reminder
       - conditions: "{{ should_vent }}"
@@ -228,12 +233,17 @@ action:
               sequence:
                 - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
-                    title: "{{area}} - Lüften"
+                    title: "{{ area }} - Lüften"
                     message: >
                       Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-          - delay:
+
+          # Warten, bis sich die Bedingung für "Lüften" ändert oder Timeout erreicht
+          - wait_template: >
+              {{ not should_vent }}
+            timeout:
               minutes: "{{ repeat_interval }}"
+            continue_on_timeout: true
 
       # Warnung Fenster offen, niemand zuhause
       - conditions: "{{ warn_window_open_absent }}"
@@ -243,7 +253,12 @@ action:
               sequence:
                 - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
-                    title: "{{area}} - Fenster offen"
+                    title: "{{ area }} - Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
-          - delay:
+
+          # Warten, bis sich diese Bedingung ändert oder Timeout erreicht
+          - wait_template: >
+              {{ not warn_window_open_absent }}
+            timeout:
               minutes: "{{ repeat_interval }}"
+            continue_on_timeout: true
