@@ -194,10 +194,13 @@ trigger:
     entity_id: !input window_sensors
   - platform: state
     entity_id: !input presence_persons
-  {% if co2_sensor != '' %}
-  - platform: state
-    entity_id: !input co2_sensor
-  {% endif %}
+  - platform: template
+    value_template: >
+      {% if (co2_sensor | default('')) != '' %}
+        {{ states(co2_sensor) not in ['unknown', 'unavailable', 'none'] }}
+      {% else %}
+        false
+      {% endif %}
   - platform: time
     at: !input time_start
   - platform: time
