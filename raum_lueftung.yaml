@@ -21,7 +21,7 @@ blueprint:
         entity:
           domain: sensor
     window_sensors:
-      name: "Fenstersensor(en) (optional)"
+      name: "Fenster-/Türsensor(en) (optional)"
       default: []
       selector:
         entity:
@@ -105,12 +105,15 @@ blueprint:
 mode: single
 
 variables:
+  # Sensorwerte
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
   sensor_windows: !input window_sensors
   sensor_persons: !input presence_persons
   sensor_co2: !input co2_sensor
+
+  # Schwellenwerte / Einstellungen
   threshold_relative: !input threshold_relative
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
@@ -120,69 +123,41 @@ variables:
   time_end: !input time_end
   notify_targets: !input notify_targets
 
+  # Berechnete Werte
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
   area: "{{ area_name(sensor_humidity) }}"
-
   diff: "{{ abs_in - abs_out }}"
-  co2: >
-    {% if sensor_co2 != '' %}
-      {{ states(sensor_co2) | float(0) }}
-    {% else %}
-      0
-    {% endif %}
-  no_windows: >
-    {{ sensor_windows | length == 0 }}
-  window_open: >
-    {% if sensor_windows | length > 0 %}
-      {{ expand(sensor_windows) | selectattr('state','eq','on') | list | count > 0 }}
-    {% else %}
-      {{ false }}
-    {% endif %}
-  high_humidity: >
-    {{ rh_in > threshold_relative and diff > threshold_difference }}
-  bad_co2: >
-    {% if sensor_co2 != '' %}
-      {{ co2 > co2_threshold }}
-    {% else %}
-      {{ false }}
-    {% endif %}
-  summer_block: >
-    {{ abs_out >= (abs_in - 1) and abs_out > 14 }}
+  co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
+  no_windows: "{{ (sensor_windows | length) == 0 }}"
+  open_windows: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length) }}"
+  window_open: "{{ open_windows > 0 }}"
+  high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
+  bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) | bool }}"
+  summer_block: "{{ abs_out >= (abs_in - 1) and abs_out > 14 }}"
   someone_home: >
     {% if sensor_persons | length > 0 %}
-      {% set persons = expand(sensor_persons) %}
-      {{ persons | selectattr('state','eq','home') | list | count > 0 }}
+      {{ expand(sensor_persons) | selectattr('state','eq','home') | list | length > 0 }}
     {% else %}
-      {{ true }}
+      true
     {% endif %}
   within_time: >
-    {% set start = today_at(time_start).time() %}
-    {% set end = today_at(time_end).time() %}
-    {% set nowt = now().time() %}
-    {% if start <= end %}
-      {{ start <= nowt <= end }}
-    {% else %}
-      {{ nowt >= start or nowt <= end }}
-    {% endif %}
-  should_vent: >
-    {{ within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}
-  should_close: >
-    {{ (window_open or no_windows) and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
-  warn_window_open_absent: >
-    {{ not someone_home and window_open and (sensor_windows | length > 0) }}
+    {% set now_ts = as_timestamp(now()) %}
+    {% set start_ts = as_timestamp(today_at(time_start)) %}
+    {% set end_ts = as_timestamp(today_at(time_end)) %}
+    {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
+
+  # Entscheidung
+  should_vent: "{{ within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}"
+  should_close: "{{ (window_open or no_windows) and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}"
+  warn_window_open_absent: "{{ not someone_home and window_open and not no_windows }}"
   vent_duration_passed: >
-    {% if window_open and sensor_windows | length > 0 %}
-      {% set open_windows = expand(sensor_windows) | selectattr('state','eq','on') | list %}
-      {% if open_windows | length > 0 %}
-        {% set oldest = open_windows | map(attribute='last_changed') | min %}
-        {{ (as_timestamp(now()) - as_timestamp(oldest)) / 60 >= min_vent_duration }}
-      {% else %}
-        {{ false }}
-      {% endif %}
+    {% if window_open and not no_windows %}
+      {% set oldest = expand(sensor_windows) | selectattr('state','eq','on') | map(attribute='last_changed') | min %}
+      {{ (as_timestamp(now()) - as_timestamp(oldest)) / 60 >= min_vent_duration }}
     {% else %}
-      {{ false }}
+      false
     {% endif %}
 
 trigger:
@@ -197,12 +172,7 @@ trigger:
   - platform: state
     entity_id: !input presence_persons
   - platform: template
-    value_template: >
-      {% if (co2_sensor | default('')) != '' %}
-        {{ states(co2_sensor) not in ['unknown', 'unavailable', 'none'] }}
-      {% else %}
-        {{ false }}
-      {% endif %}
+    value_template: "{{ sensor_co2 != '' and states(sensor_co2) not in ['unknown','unavailable','none'] }}"
   - platform: time
     at: !input time_start
   - platform: time
@@ -216,16 +186,14 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
                     title: "{{ area }} - Fenster schließen"
                     message: >
                       Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
 
-          # Warten, bis sich die Bedingung für "Fenster schließen" ändert oder Timeout erreicht
-          - wait_template: >
-              {{ not (should_close and vent_duration_passed) }}
+          - wait_template: "{{ not (should_close and vent_duration_passed) }}"
             timeout:
               minutes: "{{ repeat_interval }}"
             continue_on_timeout: true
@@ -236,16 +204,14 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
                     title: "{{ area }} - Lüften"
                     message: >
                       Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
 
-          # Warten, bis sich die Bedingung für "Lüften" ändert oder Timeout erreicht
-          - wait_template: >
-              {{ not should_vent }}
+          - wait_template: "{{ not should_vent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
             continue_on_timeout: true
@@ -256,14 +222,12 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
                     title: "{{ area }} - Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
 
-          # Warten, bis sich diese Bedingung ändert oder Timeout erreicht
-          - wait_template: >
-              {{ not warn_window_open_absent }}
+          - wait_template: "{{ not warn_window_open_absent }}"
             timeout:
               minutes: "{{ repeat_interval }}"
             continue_on_timeout: true
