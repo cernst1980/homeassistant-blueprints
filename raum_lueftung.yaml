@@ -136,7 +136,7 @@ variables:
     {% if sensor_windows | length > 0 %}
       {{ expand(sensor_windows) | selectattr('state','eq','on') | list | count > 0 }}
     {% else %}
-      false
+      {{ false }}
     {% endif %}
   high_humidity: >
     {{ rh_in > threshold_relative and diff > threshold_difference }}
@@ -144,7 +144,7 @@ variables:
     {% if sensor_co2 != '' %}
       {{ co2 > co2_threshold }}
     {% else %}
-      false
+      {{ false }}
     {% endif %}
   summer_block: >
     {{ abs_out >= (abs_in - 1) and abs_out > 14 }}
@@ -153,7 +153,7 @@ variables:
       {% set persons = expand(sensor_persons) %}
       {{ persons | selectattr('state','eq','home') | list | count > 0 }}
     {% else %}
-      true
+      {{ true }}
     {% endif %}
   within_time: >
     {% set start = today_at(time_start).time() %}
@@ -177,10 +177,10 @@ variables:
         {% set oldest = open_windows | map(attribute='last_changed') | min %}
         {{ (as_timestamp(now()) - as_timestamp(oldest)) / 60 >= min_vent_duration }}
       {% else %}
-        false
+        {{ false }}
       {% endif %}
     {% else %}
-      false
+      {{ false }}
     {% endif %}
 
 trigger:
@@ -199,7 +199,7 @@ trigger:
       {% if (co2_sensor | default('')) != '' %}
         {{ states(co2_sensor) not in ['unknown', 'unavailable', 'none'] }}
       {% else %}
-        false
+        {{ false }}
       {% endif %}
   - platform: time
     at: !input time_start
