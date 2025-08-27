@@ -132,6 +132,8 @@ variables:
     {% else %}
       0
     {% endif %}
+  no_windows: >
+    {{ sensor_windows | length == 0 }}
   window_open: >
     {% if sensor_windows | length > 0 %}
       {{ expand(sensor_windows) | selectattr('state','eq','on') | list | count > 0 }}
@@ -165,9 +167,9 @@ variables:
       {{ nowt >= start or nowt <= end }}
     {% endif %}
   should_vent: >
-    {{ within_time and someone_home and not window_open and (high_humidity or (bad_co2 and not summer_block)) }}
+    {{ within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}
   should_close: >
-    {{ window_open and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
+    {{ (window_open or no_windows) and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
   warn_window_open_absent: >
     {{ not someone_home and window_open and (sensor_windows | length > 0) }}
   vent_duration_passed: >
