@@ -76,14 +76,6 @@ blueprint:
           min: 1
           max: 60
           step: 1
-    repeat_interval:
-      name: "Wiederholintervall (Minuten)"
-      default: 60
-      selector:
-        number:
-          min: 5
-          max: 120
-          step: 5
     time_start:
       name: "Start Zeitfenster"
       default: "06:00"
@@ -116,7 +108,6 @@ variables:
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
   min_vent_duration: !input min_vent_duration
-  repeat_interval: !input repeat_interval
   time_start: !input time_start
   time_end: !input time_end
   notify_targets: !input notify_targets
@@ -124,6 +115,7 @@ variables:
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
+  area: "{{ area_name('sensor.meter_f7ee_luftfeuchtigkeit') }}"
 
   diff: "{{ abs_in - abs_out }}"
   co2: >
@@ -211,7 +203,7 @@ action:
               sequence:
                 - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
-                    title: "Fenster schließen"
+                    title: "{{area}} - Fenster schließen"
                     message: >
                       Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
@@ -229,12 +221,10 @@ action:
                     sequence:
                       - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                         data:
-                          title: "Lüften"
+                          title: "{{area}} - Lüften"
                           message: >
                             Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                             Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-                - delay:
-                    minutes: "{{ repeat_interval }}"
 
       # Warnung Fenster offen, niemand zuhause
       - conditions: "{{ warn_window_open_absent }}"
@@ -244,5 +234,5 @@ action:
               sequence:
                 - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
-                    title: "Fenster offen"
+                    title: "{{area}} - Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
