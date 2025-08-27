@@ -94,9 +94,11 @@ blueprint:
         time:
     notify_targets:
       name: "Benachrichtigung an"
+      default: []
       selector:
-        entity:
-          domain: notify
+        device:
+          filter:
+            - integration: mobile_app
           multiple: true
 
 mode: single
@@ -205,7 +207,7 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: "{{ repeat.item }}"
+                - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
                     title: "Fenster schließen"
                     message: >
@@ -223,7 +225,7 @@ action:
                 - repeat:
                     for_each: "{{ notify_targets }}"
                     sequence:
-                      - action: "{{ repeat.item }}"
+                      - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                         data:
                           title: "Lüften"
                           message: >
@@ -238,7 +240,7 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - action: "{{ repeat.item }}"
+                - action: action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
                   data:
                     title: "Fenster offen"
                     message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
