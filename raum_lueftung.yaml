@@ -92,8 +92,14 @@ blueprint:
       default: "22:00"
       selector:
         time:
+    notify_targets:
+      name: "Benachrichtigung an"
+      selector:
+        entity:
+          domain: notify
+          multiple: true
 
-mode: single  # <— wichtig: keine Delays/Waits werden abgebrochen
+mode: single
 
 variables:
   sensor_humidity: !input indoor_humidity
@@ -109,6 +115,7 @@ variables:
   repeat_interval: !input repeat_interval
   time_start: !input time_start
   time_end: !input time_end
+  notify_targets: !input notify_targets
 
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
@@ -135,7 +142,6 @@ variables:
     {% else %}
       false
     {% endif %}
-  # Sommer-Block: vermeide CO₂-Lüften bei schwüler Außenluft oder wenn außen nicht trockener ist (kleine Hysterese 1 g/m³)
   summer_block: >
     {{ abs_out >= (abs_in - 1) and abs_out > 14 }}
   someone_home: >
@@ -145,7 +151,6 @@ variables:
     {% else %}
       true
     {% endif %}
-  # Zeitfenster robust auch über Mitternacht
   within_time: >
     {% set start = today_at(time_start).time() %}
     {% set end = today_at(time_end).time() %}
@@ -155,18 +160,26 @@ variables:
     {% else %}
       {{ nowt >= start or nowt <= end }}
     {% endif %}
-
-  # Öffnen nur wenn Fenster zu, Zeit ok, jemand da, Sommerblock greift, und (Feuchte-ODER-CO₂)
   should_vent: >
     {{ within_time and someone_home and not window_open and (high_humidity or (bad_co2 and not summer_block)) }}
-  # Schließen-Empfehlung mit Hysterese
   should_close: >
     {{ window_open and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
   warn_window_open_absent: >
     {{ not someone_home and window_open and (sensor_windows | length > 0) }}
+  vent_duration_passed: >
+    {% if window_open and sensor_windows | length > 0 %}
+      {% set open_windows = expand(sensor_windows) | selectattr('state','eq','on') | list %}
+      {% if open_windows | length > 0 %}
+        {% set oldest = open_windows | map(attribute='last_changed') | min %}
+        {{ (as_timestamp(now()) - as_timestamp(oldest)) / 60 >= min_vent_duration }}
+      {% else %}
+        false
+      {% endif %}
+    {% else %}
+      false
+    {% endif %}
 
 trigger:
-  # Sensoränderungen
   - platform: state
     entity_id: !input indoor_humidity
   - platform: state
@@ -177,10 +190,8 @@ trigger:
     entity_id: !input window_sensors
   - platform: state
     entity_id: !input presence_persons
-  # Minutentakt, damit CO₂/Zeitrand/Reminder sauber funktionieren
   - platform: time_pattern
-    minutes: "/1"
-  # Zeitfenster-Kanten sicher abholen
+    minutes: "/5"
   - platform: time
     at: !input time_start
   - platform: time
@@ -188,22 +199,20 @@ trigger:
 
 action:
   - choose:
-      # 1) Schließen hat Priorität – aber erst nach Mindestdauer erneut prüfen
-      - conditions: "{{ should_close }}"
+      # Schließen hat Priorität
+      - conditions: "{{ should_close and vent_duration_passed }}"
         sequence:
-          - delay:
-              minutes: "{{ min_vent_duration }}"
-          - if:
-              - condition: template
-                value_template: "{{ should_close }}"
-            then:
-              - service: notify.mobile_app_iphone_von_chris
-                data:
-                  title: "Fenster schließen"
-                  message: >
-                    Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
-                    Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-      # 2) Öffnen/Erinnern mit Wiederholung, solange Bedingung gilt
+          - repeat:
+              for_each: "{{ notify_targets }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  data:
+                    title: "Fenster schließen"
+                    message: >
+                      Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
+                      Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+
+      # Lüften / Reminder
       - conditions: "{{ should_vent }}"
         sequence:
           - repeat:
@@ -211,43 +220,25 @@ action:
                 - condition: template
                   value_template: "{{ should_vent }}"
               sequence:
-                - service: notify.mobile_app_iphone_von_chris
-                  data:
-                    title: "Lüften"
-                    message: >
-                      Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
-                      Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
-                - wait_for_trigger:
-                    # Schleife endet, wenn Lüftbedarf weg ist ...
-                    - platform: template
-                      id: stop_vent
-                      value_template: "{{ not should_vent }}"
-                    # ... oder wenn nach Mindestdauer ein Schließkriterium erfüllt ist
-                    - platform: template
-                      id: close_ready
-                      value_template: "{{ should_close }}"
-                      for:
-                        minutes: "{{ min_vent_duration }}"
-                  timeout:
+                - repeat:
+                    for_each: "{{ notify_targets }}"
+                    sequence:
+                      - action: "{{ repeat.item }}"
+                        data:
+                          title: "Lüften"
+                          message: >
+                            Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
+                            Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                - delay:
                     minutes: "{{ repeat_interval }}"
-                  continue_on_timeout: true
-                - choose:
-                    - conditions: "{{ wait.trigger and wait.trigger.id == 'close_ready' }}"
-                      sequence:
-                        - service: notify.mobile_app_iphone_von_chris
-                          data:
-                            title: "Fenster schließen"
-                            message: >
-                              Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
-                              Δabs: {{ diff | round(1) }} g/m³
-                        - stop: "Schließen empfohlen – Ende."
-                    - conditions: "{{ wait.trigger and wait.trigger.id == 'stop_vent' }}"
-                      sequence:
-                        - stop: "Lüftbedarf vorbei – Ende."
-      # 3) Warnung: Fenster offen, niemand da
+
+      # Warnung Fenster offen, niemand zuhause
       - conditions: "{{ warn_window_open_absent }}"
         sequence:
-          - service: notify.mobile_app_iphone_von_chris
-            data:
-              title: "Fenster offen"
-              message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
+          - repeat:
+              for_each: "{{ notify_targets }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  data:
+                    title: "Fenster offen"
+                    message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
