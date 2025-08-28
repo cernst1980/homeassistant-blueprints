@@ -134,11 +134,10 @@ variables:
 
   # Fensterstatus / Anwesenheit / Zeit
   no_windows: "{{ (sensor_windows | length) == 0 }}"
-  window_open: >
-    {{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}
+  window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
     {% if sensor_persons | length > 0 %}
-      {{ expand(sensor_persons) | selectattr('state','eq','home') | list | length > 0 }}
+      {{ sensor_persons | map('states') | select('equalto', 'home') | list | length > 0 }}
     {% else %}
       {{ true }}
     {% endif %}
@@ -154,12 +153,9 @@ variables:
   summer_block: "{{ abs_out > abs_in + 3 }}"
 
   # Entscheidungen
-  should_vent: >
-    {{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}
-  should_close: >
-    {{ not invalid_sensor and within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
-  warn_window_open_absent: >
-    {{ within_time and not someone_home and window_open and not no_windows }}
+  should_vent: "{{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}"
+  should_close: "{{ not invalid_sensor and within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}"
+  warn_window_open_absent: "{{ within_time and not someone_home and window_open and not no_windows }}"
   vent_duration_passed: >
     {% if not no_windows and window_open %}
       {% set oldest = expand(sensor_windows) | selectattr('state','eq','on') | map(attribute='last_changed') | min %}
