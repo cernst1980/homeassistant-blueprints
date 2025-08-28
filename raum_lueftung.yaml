@@ -203,6 +203,13 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+          - service: persistent_notification.create
+            data:
+              title: "{{ area }} - Fenster schließen"
+              message: >
+                Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
+                Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+              notification_id: lueften_{{ area | slugify }}
           - wait_template: "{{ not (should_close and vent_duration_passed) }}"
             timeout:
               hours: "{{ repeat_interval }}"
@@ -223,6 +230,13 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+          - service: persistent_notification.create
+            data:
+              title: "{{ area }} - Lüften"
+              message: >
+                Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
+                Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+              notification_id: lueften_{{ area | slugify }}
           - wait_template: "{{ not should_vent }}"
             timeout:
               hours: "{{ repeat_interval }}"
@@ -241,6 +255,11 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+          - service: persistent_notification.create
+            data:
+              title: "{{ area }} - Fenster offen"
+              message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
+              notification_id: lueften_{{ area | slugify }}
           - wait_template: "{{ not warn_window_open_absent }}"
             timeout:
               hours: "{{ repeat_interval }}"
