@@ -151,7 +151,7 @@ variables:
   # Luftwerte
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
-  summer_block: "{{ abs_out >= (abs_in - 1) and abs_out > 14 }}"
+  summer_block: "{{ abs_out > abs_in + 3 }}"
 
   # Entscheidungen
   should_vent: >
@@ -179,8 +179,9 @@ trigger:
     entity_id: !input window_sensors
   - platform: state
     entity_id: !input presence_persons
-  - platform: template
-    value_template: "{{ sensor_co2 != '' and states(sensor_co2) not in ['unknown','unavailable','none'] }}"
+  - platform: state
+    entity_id: !input co2_sensor
+    enabled: "{{ co2_sensor != '' }}"
   - platform: time
     at: !input time_start
   - platform: time
@@ -203,6 +204,7 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+                      tag: lueften_{{ area | slugify }}
           - service: persistent_notification.create
             data:
               title: "{{ area }} - Fenster schließen"
@@ -230,6 +232,7 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+                      tag: lueften_{{ area | slugify }}
           - service: persistent_notification.create
             data:
               title: "{{ area }} - Lüften"
@@ -255,6 +258,7 @@ action:
                     data:
                       push:
                         interruption-level: time-sensitive
+                      tag: lueften_{{ area | slugify }}
           - service: persistent_notification.create
             data:
               title: "{{ area }} - Fenster offen"
