@@ -181,7 +181,7 @@ trigger:
     entity_id: !input presence_persons
   - platform: state
     entity_id: !input co2_sensor
-    enabled: "{{ co2_sensor is not none and co2_sensor != '' }}"
+    enabled: false
   - platform: time
     at: !input time_start
   - platform: time
