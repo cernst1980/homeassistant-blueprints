@@ -130,6 +130,7 @@ variables:
   area: "{{ area_name(sensor_humidity) }}"
   diff: "{{ abs_in - abs_out }}"
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
+  invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
   # Fensterstatus / Anwesenheit / Zeit
   no_windows: "{{ (sensor_windows | length) == 0 }}"
@@ -154,9 +155,9 @@ variables:
 
   # Entscheidungen
   should_vent: >
-    {{ within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}
+    {{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}
   should_close: >
-    {{ within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
+    {{ not invalid_sensor and within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}
   warn_window_open_absent: >
     {{ within_time and not someone_home and window_open and not no_windows }}
   vent_duration_passed: >
