@@ -179,9 +179,6 @@ triggers:
     entity_id: !input window_sensors
   - trigger: state
     entity_id: !input presence_persons
-  - enabled: false
-    trigger: state
-    entity_id: !input co2_sensor
   - trigger: time
     at: !input time_start
   - trigger: time
