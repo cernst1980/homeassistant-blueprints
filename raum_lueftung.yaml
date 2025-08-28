@@ -168,23 +168,23 @@ variables:
       {{ true }}
     {% endif %}
 
-trigger:
-  - platform: state
+triggers:
+  - trigger: state
     entity_id: !input indoor_humidity
-  - platform: state
+  - trigger: state
     entity_id: !input indoor_absolute
-  - platform: state
+  - trigger: state
     entity_id: !input outdoor_absolute
-  - platform: state
+  - trigger: state
     entity_id: !input window_sensors
-  - platform: state
+  - trigger: state
     entity_id: !input presence_persons
-  - platform: state
+  - enabled: false
+    trigger: state
     entity_id: !input co2_sensor
-    enabled: false
-  - platform: time
+  - trigger: time
     at: !input time_start
-  - platform: time
+  - trigger: time
     at: !input time_end
 
 action:
