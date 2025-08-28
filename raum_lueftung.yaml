@@ -179,6 +179,8 @@ triggers:
     entity_id: !input window_sensors
   - trigger: state
     entity_id: !input presence_persons
+  - trigger: template
+    value_template: "{{ co2_sensor != '' and states(co2_sensor)|float(0) > co2_threshold }}"
   - trigger: time
     at: !input time_start
   - trigger: time
