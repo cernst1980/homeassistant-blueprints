@@ -1,4 +1,4 @@
-# --- Automatische Raumlüftung mit Clear-Funktion ---
+# --- Automatische Raumlüftung mit Clear-Funktion (iOS + WebUI) ---
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
   description: >
@@ -330,9 +330,12 @@ action:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                - service: "notify.clear_notification"
+                # iOS/Android Companion App Clear
+                - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
-                    tag: lueften_{{ area | slugify }}
+                    message: "clear_notification"
+                    data:
+                      tag: lueften_{{ area | slugify }}
           - service: persistent_notification.dismiss
             data:
               notification_id: lueften_{{ area | slugify }}
