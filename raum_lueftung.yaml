@@ -1,13 +1,15 @@
+# --- Automatische Raumlüftung mit Clear-Funktion ---
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
   description: >
     Empfiehlt Lüften oder Fenster schließen basierend auf relativer/absoluter Luftfeuchtigkeit
     und optional CO₂. Meldungen werden auf einen konfigurierbaren Zeitraum begrenzt
     (z. B. 1x pro Tag), überschreiben sich gegenseitig und berücksichtigen Fensterstatus,
-    Anwesenheit und Zeitfenster.
+    Anwesenheit und Zeitfenster. Meldungen werden automatisch entfernt, wenn die empfohlene Aktion durchgeführt wurde.
   domain: automation
 
   input:
+    # --- Sensoren ---
     indoor_humidity:
       name: "Relative Luftfeuchtigkeit Innen (%)"
       selector:
@@ -130,7 +132,7 @@ blueprint:
 mode: single
 
 variables:
-  # Eingabewerte
+  # --- Eingabewerte ---
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
@@ -149,7 +151,7 @@ variables:
   time_end: !input time_end
   notify_targets: !input notify_targets
 
-  # Messwerte
+  # --- Messwerte ---
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
@@ -158,7 +160,7 @@ variables:
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
-  # Zustände
+  # --- Zustände ---
   no_windows: "{{ (sensor_windows | length) == 0 }}"
   window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
@@ -173,7 +175,7 @@ variables:
     {% set end_ts = as_timestamp(today_at(time_end)) %}
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
-  # Bewertung
+  # --- Bewertung ---
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
   summer_block: "{{ abs_out > abs_in + 3 }}"
@@ -190,7 +192,7 @@ variables:
       {{ true }}
     {% endif %}
 
-  # Meldungsbegrenzung
+  # --- Meldungsbegrenzung ---
   last_status: "{{ states(helper_status) }}"
   last_notify: "{{ as_datetime(states(helper_last_notify)) if states(helper_last_notify) not in ['unknown','unavailable','none'] else none }}"
   current_status: >
@@ -318,3 +320,23 @@ action:
             data:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
+
+  # --- Clear-Meldungen bei erfolgreicher Aktion ---
+  - choose:
+      - conditions: >
+          {{ (last_status == 'lüften' and window_open) or
+             (last_status == 'schließen' and not window_open) }}
+        sequence:
+          - repeat:
+              for_each: "{{ notify_targets }}"
+              sequence:
+                - service: "notify.clear_notification"
+                  data:
+                    tag: lueften_{{ area | slugify }}
+          - service: persistent_notification.dismiss
+            data:
+              notification_id: lueften_{{ area | slugify }}
+          - service: input_text.set_value
+            data:
+              entity_id: "{{ helper_status }}"
+              value: "none"
