@@ -1,6 +1,10 @@
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
-  description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit und optional CO₂."
+  description: >
+    Empfiehlt Lüften oder Fenster schließen basierend auf relativer/absoluter Luftfeuchtigkeit
+    und optional CO₂. Meldungen werden auf einen konfigurierbaren Zeitraum begrenzt
+    (z. B. 1x pro Tag), überschreiben sich gegenseitig und berücksichtigen Fensterstatus,
+    Anwesenheit und Zeitfenster.
   domain: automation
 
   input:
@@ -31,7 +35,7 @@ blueprint:
             - door
           multiple: true
     presence_persons:
-      name: "Personen zur Anwesenheit"
+      name: "Personen zur Anwesenheit (optional)"
       default: []
       selector:
         entity:
@@ -44,6 +48,8 @@ blueprint:
         entity:
           domain: sensor
           device_class: carbon_dioxide
+
+    # --- Schwellenwerte ---
     threshold_relative:
       name: "Rel. LF-Schwelle (%)"
       default: 60
@@ -76,14 +82,26 @@ blueprint:
           min: 1
           max: 60
           step: 1
+
+    # --- Benachrichtigungskontrolle ---
     notify_repeat_hours:
       name: "Benachrichtigungsintervall (h)"
+      description: "Wie oft darf pro Raum maximal benachrichtigt werden (z. B. 24h = max. 1x pro Tag)?"
       default: 24
       selector:
         number:
           min: 1
           max: 24
           step: 1
+    notify_targets:
+      name: "Benachrichtigung an (Geräte)"
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+          multiple: true
+
+    # --- Zeitfenster ---
     time_start:
       name: "Start Zeitfenster"
       default: "06:00"
@@ -94,20 +112,17 @@ blueprint:
       default: "22:00"
       selector:
         time:
-    notify_targets:
-      name: "Benachrichtigung an"
-      selector:
-        device:
-          filter:
-            - integration: mobile_app
-          multiple: true
+
+    # --- Status-Helper ---
     helper_status:
       name: "Helper: Letzter Lüftungsstatus (input_text)"
+      description: "Speichert den zuletzt gesendeten Status (lüften, schließen, warnung)"
       selector:
         entity:
           domain: input_text
     helper_last_notify:
       name: "Helper: Letzte Benachrichtigung (input_datetime)"
+      description: "Speichert Zeitstempel der letzten Benachrichtigung"
       selector:
         entity:
           domain: input_datetime
@@ -115,6 +130,7 @@ blueprint:
 mode: single
 
 variables:
+  # Eingabewerte
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
@@ -133,6 +149,7 @@ variables:
   time_end: !input time_end
   notify_targets: !input notify_targets
 
+  # Messwerte
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
@@ -141,6 +158,7 @@ variables:
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
+  # Zustände
   no_windows: "{{ (sensor_windows | length) == 0 }}"
   window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
@@ -155,6 +173,7 @@ variables:
     {% set end_ts = as_timestamp(today_at(time_end)) %}
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
+  # Bewertung
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
   summer_block: "{{ abs_out > abs_in + 3 }}"
@@ -171,6 +190,7 @@ variables:
       {{ true }}
     {% endif %}
 
+  # Meldungsbegrenzung
   last_status: "{{ states(helper_status) }}"
   last_notify: "{{ as_datetime(states(helper_last_notify)) if states(helper_last_notify) not in ['unknown','unavailable','none'] else none }}"
   current_status: >
@@ -207,6 +227,7 @@ triggers:
 
 action:
   - choose:
+      # --- Fenster schließen ---
       - conditions: "{{ (should_close and vent_duration_passed) and (status_changed or notify_due) }}"
         sequence:
           - repeat:
@@ -238,6 +259,7 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
+      # --- Lüften ---
       - conditions: "{{ should_vent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
@@ -269,6 +291,7 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
+      # --- Warnung Fenster offen bei Abwesenheit ---
       - conditions: "{{ warn_window_open_absent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
