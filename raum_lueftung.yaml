@@ -1,4 +1,4 @@
-# --- Automatische Raumlüftung mit Clear-Funktion (iOS + WebUI) ---
+# --- Automatische Raumlüftung mit konsistenter Clear-Funktion ---
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
   description: >
@@ -132,7 +132,6 @@ blueprint:
 mode: single
 
 variables:
-  # --- Eingabewerte ---
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
@@ -151,7 +150,6 @@ variables:
   time_end: !input time_end
   notify_targets: !input notify_targets
 
-  # --- Messwerte ---
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
@@ -160,7 +158,6 @@ variables:
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
-  # --- Zustände ---
   no_windows: "{{ (sensor_windows | length) == 0 }}"
   window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
@@ -175,7 +172,6 @@ variables:
     {% set end_ts = as_timestamp(today_at(time_end)) %}
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
-  # --- Bewertung ---
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
   summer_block: "{{ abs_out > abs_in + 3 }}"
@@ -192,7 +188,6 @@ variables:
       {{ true }}
     {% endif %}
 
-  # --- Meldungsbegrenzung ---
   last_status: "{{ states(helper_status) }}"
   last_notify: "{{ as_datetime(states(helper_last_notify)) if states(helper_last_notify) not in ['unknown','unavailable','none'] else none }}"
   current_status: >
@@ -321,16 +316,16 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
-  # --- Clear-Meldungen bei erfolgreicher Aktion ---
+  # --- Clear-Meldungen bei Statusänderung ---
   - choose:
       - conditions: >
-          {{ (last_status == 'lüften' and window_open) or
-             (last_status == 'schließen' and not window_open) }}
+          {{ (last_status == 'lüften' and window_open)
+             or (last_status == 'schließen' and not window_open)
+             or (last_status == 'warnung' and (not window_open or someone_home)) }}
         sequence:
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
-                # iOS/Android Companion App Clear
                 - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
                     message: "clear_notification"
