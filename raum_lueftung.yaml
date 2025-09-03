@@ -1,6 +1,6 @@
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
-  description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit, optional CO₂, unter Berücksichtigung von Fensterstatus und Personenanwesenheit."
+  description: "Raumweise Lüftungsempfehlung basierend auf rel./abs. Luftfeuchtigkeit und optional CO₂."
   domain: automation
 
   input:
@@ -76,9 +76,9 @@ blueprint:
           min: 1
           max: 60
           step: 1
-    repeat_interval:
-      name: "Nachrichten-Delay (Stunden)"
-      default: 1
+    notify_repeat_hours:
+      name: "Benachrichtigungsintervall (h)"
+      default: 24
       selector:
         number:
           min: 1
@@ -101,29 +101,38 @@ blueprint:
           filter:
             - integration: mobile_app
           multiple: true
+    helper_status:
+      name: "Helper: Letzter Lüftungsstatus (input_text)"
+      selector:
+        entity:
+          domain: input_text
+    helper_last_notify:
+      name: "Helper: Letzte Benachrichtigung (input_datetime)"
+      selector:
+        entity:
+          domain: input_datetime
 
 mode: single
 
 variables:
-  # Sensorwerte
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
   sensor_windows: !input window_sensors
   sensor_persons: !input presence_persons
   sensor_co2: !input co2_sensor
+  helper_status: !input helper_status
+  helper_last_notify: !input helper_last_notify
 
-  # Schwellenwerte / Einstellungen
   threshold_relative: !input threshold_relative
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
   min_vent_duration: !input min_vent_duration
-  repeat_interval: !input repeat_interval
+  notify_repeat_hours: !input notify_repeat_hours
   time_start: !input time_start
   time_end: !input time_end
   notify_targets: !input notify_targets
 
-  # Berechnete Werte
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
@@ -132,7 +141,6 @@ variables:
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
-  # Fensterstatus / Anwesenheit / Zeit
   no_windows: "{{ (sensor_windows | length) == 0 }}"
   window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
@@ -147,21 +155,36 @@ variables:
     {% set end_ts = as_timestamp(today_at(time_end)) %}
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
-  # Luftwerte
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
   summer_block: "{{ abs_out > abs_in + 3 }}"
 
-  # Entscheidungen
   should_vent: "{{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}"
   should_close: "{{ not invalid_sensor and within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}"
   warn_window_open_absent: "{{ within_time and not someone_home and window_open and not no_windows }}"
+
   vent_duration_passed: >
     {% if not no_windows and window_open %}
       {% set oldest = expand(sensor_windows) | selectattr('state','eq','on') | map(attribute='last_changed') | min %}
       {{ (as_timestamp(now()) - as_timestamp(oldest)) / 60 >= min_vent_duration }}
     {% else %}
       {{ true }}
+    {% endif %}
+
+  last_status: "{{ states(helper_status) }}"
+  last_notify: "{{ as_datetime(states(helper_last_notify)) if states(helper_last_notify) not in ['unknown','unavailable','none'] else none }}"
+  current_status: >
+    {% if should_vent %} lüften
+    {% elif should_close %} schließen
+    {% elif warn_window_open_absent %} warnung
+    {% else %} none
+    {% endif %}
+  status_changed: "{{ last_status != current_status }}"
+  notify_due: >
+    {% if last_notify is none %}
+      true
+    {% else %}
+      {{ (as_timestamp(now()) - as_timestamp(last_notify)) / 3600 >= notify_repeat_hours }}
     {% endif %}
 
 triggers:
@@ -184,8 +207,7 @@ triggers:
 
 action:
   - choose:
-      # Fenster schließen → sofort
-      - conditions: "{{ should_close and vent_duration_passed }}"
+      - conditions: "{{ (should_close and vent_duration_passed) and (status_changed or notify_due) }}"
         sequence:
           - repeat:
               for_each: "{{ notify_targets }}"
@@ -207,13 +229,16 @@ action:
                 Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                 Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               notification_id: lueften_{{ area | slugify }}
-          - wait_template: "{{ not (should_close and vent_duration_passed) }}"
-            timeout:
-              hours: "{{ repeat_interval }}"
-            continue_on_timeout: true
+          - service: input_text.set_value
+            data:
+              entity_id: "{{ helper_status }}"
+              value: "{{ current_status }}"
+          - service: input_datetime.set_datetime
+            data:
+              entity_id: "{{ helper_last_notify }}"
+              datetime: "{{ now().isoformat() }}"
 
-      # Lüften / Reminder
-      - conditions: "{{ should_vent }}"
+      - conditions: "{{ should_vent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
               for_each: "{{ notify_targets }}"
@@ -235,13 +260,16 @@ action:
                 Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                 Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               notification_id: lueften_{{ area | slugify }}
-          - wait_template: "{{ not should_vent }}"
-            timeout:
-              hours: "{{ repeat_interval }}"
-            continue_on_timeout: true
+          - service: input_text.set_value
+            data:
+              entity_id: "{{ helper_status }}"
+              value: "{{ current_status }}"
+          - service: input_datetime.set_datetime
+            data:
+              entity_id: "{{ helper_last_notify }}"
+              datetime: "{{ now().isoformat() }}"
 
-      # Warnung Fenster offen, niemand zuhause
-      - conditions: "{{ warn_window_open_absent }}"
+      - conditions: "{{ warn_window_open_absent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
               for_each: "{{ notify_targets }}"
@@ -259,7 +287,11 @@ action:
               title: "{{ area }} - Fenster offen"
               message: "Achtung: Fenster noch offen, während niemand zuhause ist!"
               notification_id: lueften_{{ area | slugify }}
-          - wait_template: "{{ not warn_window_open_absent }}"
-            timeout:
-              hours: "{{ repeat_interval }}"
-            continue_on_timeout: true
+          - service: input_text.set_value
+            data:
+              entity_id: "{{ helper_status }}"
+              value: "{{ current_status }}"
+          - service: input_datetime.set_datetime
+            data:
+              entity_id: "{{ helper_last_notify }}"
+              datetime: "{{ now().isoformat() }}"
