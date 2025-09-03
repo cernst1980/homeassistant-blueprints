@@ -319,9 +319,9 @@ action:
   # --- Clear-Meldungen bei Statusänderung ---
   - choose:
       - conditions: >
-          {{ (last_status == 'lüften' and window_open)
-             or (last_status == 'schließen' and not window_open)
-             or (last_status == 'warnung' and (not window_open or someone_home)) }}
+          {{ (last_status == 'lüften' and not no_windows and window_open)
+             or (last_status == 'schließen' and not no_windows and not window_open)
+             or (last_status == 'warnung' and ((not no_windows and not window_open) or someone_home)) }}
         sequence:
           - repeat:
               for_each: "{{ notify_targets }}"
