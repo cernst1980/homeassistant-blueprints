@@ -1,11 +1,10 @@
-# --- Automatische Raumlüftung mit konsistenter Clear-Funktion ---
 blueprint:
   name: "Raumlüftungsempfehlung (Feuchte + CO₂)"
   description: >
     Empfiehlt Lüften oder Fenster schließen basierend auf relativer/absoluter Luftfeuchtigkeit
-    und optional CO₂. Meldungen werden auf einen konfigurierbaren Zeitraum begrenzt
-    (z. B. 1x pro Tag), überschreiben sich gegenseitig und berücksichtigen Fensterstatus,
-    Anwesenheit und Zeitfenster. Meldungen werden automatisch entfernt, wenn die empfohlene Aktion durchgeführt wurde.
+    und optional CO₂. Meldungen werden auf ein konfigurierbares Intervall begrenzt (z. B. 1x pro Tag),
+    überschreiben sich gegenseitig und berücksichtigen Fensterstatus, Anwesenheit und Zeitfenster.
+    Meldungen werden automatisch entfernt, wenn die empfohlene Aktion durchgeführt wurde.
   domain: automation
 
   input:
@@ -16,18 +15,24 @@ blueprint:
         entity:
           domain: sensor
           device_class: humidity
+
     indoor_absolute:
       name: "Absolute Luftfeuchtigkeit Innen (g/m³)"
       selector:
         entity:
           domain: sensor
+
     outdoor_absolute:
       name: "Absolute Luftfeuchtigkeit Außen (g/m³)"
       selector:
         entity:
           domain: sensor
+
     window_sensors:
       name: "Fenster-/Türsensor(en) (optional)"
+      description: >
+        Optional: Fenster- oder Türkontakte (device_class: window / door).
+        Wenn leer, existiert kein Fensterstatus — Clearing für Lüften/Schließen erfolgt dann nicht automatisch.
       default: []
       selector:
         entity:
@@ -36,67 +41,117 @@ blueprint:
             - window
             - door
           multiple: true
+
     presence_persons:
       name: "Personen zur Anwesenheit (optional)"
+      description: >
+        Optional: Liste von `person`-Entities. Wenn leer, wird Anwesenheit ignoriert (angenommen: jemand zuhause).
       default: []
       selector:
         entity:
           domain: person
           multiple: true
+
     co2_sensor:
       name: "Optionaler CO₂-Sensor"
+      description: "Optional: CO₂ Sensor (device_class: carbon_dioxide)."
       default: ""
       selector:
         entity:
           domain: sensor
           device_class: carbon_dioxide
 
-    # --- Schwellenwerte ---
+    # --- Schwellenwerte (konfigurierbar / aus Historie abgeleitet) ---
     threshold_relative:
       name: "Rel. LF-Schwelle (%)"
+      description: "Relative Luftfeuchte (innen) ab der Lüftung empfohlen wird (Schimmel-Risiko)."
       default: 60
       selector:
         number:
           min: 40
           max: 80
           step: 1
+
     threshold_difference:
       name: "Absolute LF-Differenz Schwelle (g/m³)"
-      default: 2
+      description: "Δabs = abs_in - abs_out. Ab welchem Δabs Lüften empfohlen wird (Vorwärtsschwelle)."
+      # Letzter gemeinsamer Konsens: 1.5 g/m³ (lüften ab ~1.5)
+      default: 1.5
       selector:
         number:
           min: 0
           max: 10
           step: 0.1
+
     co2_threshold:
       name: "CO₂-Schwelle (ppm)"
-      default: 1400
+      description: "CO₂-Schwelle zur Auslösung einer Lüftungsempfehlung (Wohnräume: 1000–1200 üblich)."
+      default: 1200
       selector:
         number:
           min: 400
           max: 2000
           step: 50
+
     min_vent_duration:
       name: "Mindest-Lüftungsdauer (Minuten)"
-      default: 10
+      description: >
+        Minimale Lüftungsdauer, bevor ggf. eine Schließen-Empfehlung erfolgen kann.
+        Bei Kippfenstern eher 15–20 min, bei Stoßlüftung 5–10 min.
+      default: 20
       selector:
         number:
           min: 1
           max: 60
           step: 1
 
+    # --- zusätzliche konfigurierbare Close-/Summer-Parameter (nach Wunsch erweitert) ---
+    summer_block_threshold:
+      name: "Summer-Block Schwelle (g/m³)"
+      description: >
+        Wenn außen feuchter als innen um diesen Wert (g/m³), wird Lüften blockiert (Sommer-Block).
+        Größerer Wert = seltener blocken; kleinerer Wert = früher blocken.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+
+    close_diff_threshold:
+      name: "Schließen bei Δabs (g/m³)"
+      description: "Wenn Δabs (abs_in - abs_out) unter diesen Wert fällt, sollte geschlossen werden."
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+
+    close_rh_threshold:
+      name: "Schließen bei relativer LF (%)"
+      description: "Wenn die relative Luftfeuchte im Raum unter diesen Wert fällt, kann geschlossen werden."
+      default: 50
+      selector:
+        number:
+          min: 30
+          max: 60
+          step: 1
+
     # --- Benachrichtigungskontrolle ---
     notify_repeat_hours:
       name: "Benachrichtigungsintervall (h)"
-      description: "Wie oft darf pro Raum maximal benachrichtigt werden (z. B. 24h = max. 1x pro Tag)?"
+      description: "Wie oft pro Raum maximal eine Meldung erlaubt ist (z. B. 24 = max. 1x pro Tag)."
       default: 24
       selector:
         number:
           min: 1
           max: 24
           step: 1
+
     notify_targets:
       name: "Benachrichtigung an (Geräte)"
+      description: "Mobile App Geräte (multiple)."
       selector:
         device:
           filter:
@@ -109,29 +164,35 @@ blueprint:
       default: "06:00"
       selector:
         time:
+
     time_end:
       name: "End Zeitfenster"
       default: "22:00"
       selector:
         time:
 
-    # --- Status-Helper ---
+    # --- Status-Helper (vom Nutzer anzulegen / zuweisen) ---
     helper_status:
       name: "Helper: Letzter Lüftungsstatus (input_text)"
-      description: "Speichert den zuletzt gesendeten Status (lüften, schließen, warnung)"
+      description: "Speichert zuletzt gesendeten Status: 'lüften' / 'schließen' / 'warnung' / 'none'."
       selector:
         entity:
           domain: input_text
+
     helper_last_notify:
       name: "Helper: Letzte Benachrichtigung (input_datetime)"
-      description: "Speichert Zeitstempel der letzten Benachrichtigung"
+      description: "Speichert Zeitpunkt der letzten versendeten Benachrichtigung (für notify_repeat_hours)."
       selector:
         entity:
           domain: input_datetime
 
 mode: single
 
+# -----------------------
+# Variablen (berechnet)
+# -----------------------
 variables:
+  # Eingabereferenzen
   sensor_humidity: !input indoor_humidity
   sensor_absolute: !input indoor_absolute
   sensor_outdoor: !input outdoor_absolute
@@ -141,23 +202,29 @@ variables:
   helper_status: !input helper_status
   helper_last_notify: !input helper_last_notify
 
+  # Konfigurationswerte (als Variablen verfügbar)
   threshold_relative: !input threshold_relative
   threshold_difference: !input threshold_difference
   co2_threshold: !input co2_threshold
   min_vent_duration: !input min_vent_duration
+  summer_block_threshold: !input summer_block_threshold
+  close_diff_threshold: !input close_diff_threshold
+  close_rh_threshold: !input close_rh_threshold
   notify_repeat_hours: !input notify_repeat_hours
   time_start: !input time_start
   time_end: !input time_end
   notify_targets: !input notify_targets
 
+  # Messwerte (gereade aus den Sensoren)
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
   area: "{{ area_name(sensor_humidity) }}"
-  diff: "{{ abs_in - abs_out }}"
+  diff: "{{ (abs_in - abs_out) | round(2) }}"
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
+  # Fensterstatus / Anwesenheit / Zeit
   no_windows: "{{ (sensor_windows | length) == 0 }}"
   window_open: "{{ sensor_windows | length > 0 and (expand(sensor_windows) | selectattr('state','eq','on') | list | length > 0) }}"
   someone_home: >
@@ -172,14 +239,22 @@ variables:
     {% set end_ts = as_timestamp(today_at(time_end)) %}
     {{ start_ts <= now_ts <= end_ts if start_ts <= end_ts else now_ts >= start_ts or now_ts <= end_ts }}
 
+  # Bewertung (Logik)
   high_humidity: "{{ rh_in > threshold_relative and diff > threshold_difference }}"
   bad_co2: "{{ (sensor_co2 != '') and (co2 > co2_threshold) }}"
-  summer_block: "{{ abs_out > abs_in + 3 }}"
+  # Summer-Block: draußen deutlich feuchter als innen => Lüften blockieren
+  summer_block: "{{ abs_out > abs_in + (summer_block_threshold | float) }}"
 
-  should_vent: "{{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open) and (high_humidity or (bad_co2 and not summer_block)) }}"
-  should_close: "{{ not invalid_sensor and within_time and someone_home and (window_open or no_windows) and not bad_co2 and (diff < 1 or rh_in < 55 or abs_in < abs_out) }}"
+  # Entscheidungen (verwenden die konfigurierbaren Schwellen)
+  should_vent: >
+    {{ not invalid_sensor and within_time and someone_home and (no_windows or not window_open)
+       and (high_humidity or (bad_co2 and not summer_block)) }}
+  should_close: >
+    {{ not invalid_sensor and within_time and someone_home and (window_open or no_windows)
+       and not bad_co2 and (diff < (close_diff_threshold | float) or rh_in < (close_rh_threshold | float)) }}
   warn_window_open_absent: "{{ within_time and not someone_home and window_open and not no_windows }}"
 
+  # Vent-Dauer (prüfen, ob Mindest-Lüftungsdauer erreicht wurde)
   vent_duration_passed: >
     {% if not no_windows and window_open %}
       {% set oldest = expand(sensor_windows) | selectattr('state','eq','on') | map(attribute='last_changed') | min %}
@@ -188,6 +263,7 @@ variables:
       {{ true }}
     {% endif %}
 
+  # Meldungsbegrenzung (1x pro notify_repeat_hours)
   last_status: "{{ states(helper_status) }}"
   last_notify: "{{ as_datetime(states(helper_last_notify)) if states(helper_last_notify) not in ['unknown','unavailable','none'] else none }}"
   current_status: >
@@ -204,6 +280,9 @@ variables:
       {{ (as_timestamp(now()) - as_timestamp(last_notify)) / 3600 >= notify_repeat_hours }}
     {% endif %}
 
+# -----------------------
+# Trigger: auf relevante Änderungen reagieren
+# -----------------------
 triggers:
   - trigger: state
     entity_id: !input indoor_humidity
@@ -216,17 +295,23 @@ triggers:
   - trigger: state
     entity_id: !input presence_persons
   - trigger: template
-    value_template: "{{ co2_sensor != '' and states(co2_sensor)|float(0) > co2_threshold }}"
+    value_template: "{{ sensor_co2 != '' and states(sensor_co2)|float(0) > co2_threshold }}"
   - trigger: time
     at: !input time_start
   - trigger: time
     at: !input time_end
 
+# -----------------------
+# Actions
+# -----------------------
 action:
   - choose:
-      # --- Fenster schließen ---
+      # -----------------------
+      # Fenster schließen → sofort (wenn vent_duration_passed erfüllt)
+      # -----------------------
       - conditions: "{{ (should_close and vent_duration_passed) and (status_changed or notify_due) }}"
         sequence:
+          # Push an alle ausgewählten Geräte
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
@@ -240,6 +325,7 @@ action:
                       push:
                         interruption-level: time-sensitive
                       tag: lueften_{{ area | slugify }}
+          # Persistente Notification (WebUI)
           - service: persistent_notification.create
             data:
               title: "{{ area }} - Fenster schließen"
@@ -247,6 +333,7 @@ action:
                 Fenster schließen empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                 Δabs: {{ diff | round(1) }} g/m³{% if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               notification_id: lueften_{{ area | slugify }}
+          # Status-Helper setzen + Zeitstempel für Intervall
           - service: input_text.set_value
             data:
               entity_id: "{{ helper_status }}"
@@ -256,7 +343,9 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
-      # --- Lüften ---
+      # -----------------------
+      # Lüften / Reminder
+      # -----------------------
       - conditions: "{{ should_vent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
@@ -288,7 +377,9 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
-      # --- Warnung Fenster offen bei Abwesenheit ---
+      # -----------------------
+      # Warnung: Fenster offen bei Abwesenheit
+      # -----------------------
       - conditions: "{{ warn_window_open_absent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
@@ -316,13 +407,19 @@ action:
               entity_id: "{{ helper_last_notify }}"
               datetime: "{{ now().isoformat() }}"
 
-  # --- Clear-Meldungen bei Statusänderung ---
+  # -----------------------
+  # Clear-Meldungen bei erfolgreicher Aktion (nur wenn Bedingung erfüllt)
+  # - LÜFTEN: clear, wenn Fenster geöffnet wurde (nur bei vorhandenen Fenstersensoren)
+  # - SCHLIESSEN: clear, wenn Fenster geschlossen wurde (nur bei vorhandenen Fenstersensoren)
+  # - WARNUNG: clear, wenn Fenster geschlossen wurde (wenn Sensor vorhanden) oder jemand nach Hause kommt
+  # -----------------------
   - choose:
       - conditions: >
           {{ (last_status == 'lüften' and not no_windows and window_open)
              or (last_status == 'schließen' and not no_windows and not window_open)
              or (last_status == 'warnung' and ((not no_windows and not window_open) or someone_home)) }}
         sequence:
+          # Push-Clearing (Companion App iOS/Android): sendet "clear_notification" mit gleichem Tag
           - repeat:
               for_each: "{{ notify_targets }}"
               sequence:
@@ -331,9 +428,11 @@ action:
                     message: "clear_notification"
                     data:
                       tag: lueften_{{ area | slugify }}
+          # WebUI persistent notification löschen
           - service: persistent_notification.dismiss
             data:
               notification_id: lueften_{{ area | slugify }}
+          # Helper-Status auf none zurücksetzen
           - service: input_text.set_value
             data:
               entity_id: "{{ helper_status }}"
