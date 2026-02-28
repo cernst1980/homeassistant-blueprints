@@ -219,7 +219,7 @@ variables:
   rh_in: "{{ states(sensor_humidity) | float(0) }}"
   abs_in: "{{ states(sensor_absolute) | float(0) }}"
   abs_out: "{{ states(sensor_outdoor) | float(0) }}"
-  area: "{{ area_name(sensor_humidity) }}"
+  area: "{{ area_name(sensor_humidity) or 'Raum' }}"
   diff: "{{ (abs_in - abs_out) | round(2) }}"
   co2: "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
@@ -295,7 +295,10 @@ triggers:
   - trigger: state
     entity_id: !input presence_persons
   - trigger: template
-    value_template: "{{ sensor_co2 != '' and states(sensor_co2)|float(0) > co2_threshold }}"
+    value_template: >
+      {% set s = !input co2_sensor %}
+      {% set threshold = !input co2_threshold %}
+      {{ s != '' and states(s) | float(0) > threshold }}
   - trigger: time
     at: !input time_start
   - trigger: time
