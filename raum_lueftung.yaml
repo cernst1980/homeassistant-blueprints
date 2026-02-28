@@ -294,15 +294,12 @@ triggers:
     entity_id: !input window_sensors
   - trigger: state
     entity_id: !input presence_persons
-  - trigger: template
-    value_template: >
-      {% set s = !input co2_sensor %}
-      {% set threshold = !input co2_threshold %}
-      {{ s != '' and states(s) | float(0) > threshold }}
   - trigger: time
     at: !input time_start
   - trigger: time
     at: !input time_end
+  - trigger: time_pattern
+    minutes: "/5"   # alle 5 Min – deckt CO₂-Änderungen ab
 
 # -----------------------
 # Actions
