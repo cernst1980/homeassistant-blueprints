@@ -30,9 +30,8 @@ blueprint:
 
     # [NEU] Außentemperatur für Frost-Schließen-Bedingung
     outdoor_temp:
-      name: "Außentemperatur (optional)"
-      description: "Optional: Außentemperatur-Sensor. Wenn < -5 °C → Fenster schließen empfohlen."
-      default: ""
+      name: "Außentemperatur"
+      description: "Außentemperatur-Sensor. Wenn < Frost-Schwelle → Fenster schließen empfohlen."
       selector:
         entity:
           domain: sensor
@@ -65,11 +64,12 @@ blueprint:
     co2_sensor:
       name: "CO₂-Sensor (optional)"
       description: "Optional: CO₂ Sensor (device_class: carbon_dioxide)."
-      default: ""
+      default: []
       selector:
         entity:
           domain: sensor
           device_class: carbon_dioxide
+          multiple: true
 
     # --- Schwellenwerte ---
     threshold_relative:
@@ -247,14 +247,37 @@ variables:
   time_end: !input time_end
   notify_targets: !input notify_targets
 
+  # Nur Geräte, deren device_tracker auf 'home' steht
+  # Fallback: alle, wenn keine Personen konfiguriert oder kein Tracker gefunden
+  home_devices: >
+    {% if sensor_persons | length == 0 %}
+      {{ notify_targets }}
+    {% else %}
+      {% set ns = namespace(devices=[]) %}
+      {% for device in notify_targets %}
+        {% set trackers = device_entities(device)
+             | select('match', 'device_tracker\\.') | list %}
+        {% if trackers | length > 0 %}
+          {% if is_state(trackers[0], 'home') %}
+            {% set ns.devices = ns.devices + [device] %}
+          {% endif %}
+        {% else %}
+          {# Kein Tracker gefunden → Gerät trotzdem einschließen (fail-safe) #}
+          {% set ns.devices = ns.devices + [device] %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.devices }}
+    {% endif %}
+
   # Messwerte
-  rh_in:   "{{ states(sensor_humidity) | float(0) }}"
-  abs_in:  "{{ states(sensor_absolute) | float(0) }}"
-  abs_out: "{{ states(sensor_outdoor) | float(0) }}"
-  temp_out: "{{ states(sensor_outdoor_temp) | float(99) if sensor_outdoor_temp != '' else 99 }}"
-  area:    "{{ area_name(sensor_humidity) or 'Raum' }}"
-  diff:    "{{ (abs_in - abs_out) | round(2) }}"
-  co2:     "{{ states(sensor_co2) | float(0) if sensor_co2 != '' else 0 }}"
+  rh_in:    "{{ states(sensor_humidity) | float(0) }}"
+  abs_in:   "{{ states(sensor_absolute) | float(0) }}"
+  abs_out:  "{{ states(sensor_outdoor) | float(0) }}"
+  temp_out: "{{ states(sensor_outdoor_temp) | float(99) }}"
+  area:     "{{ area_name(sensor_humidity) or 'Raum' }}"
+  diff:     "{{ (abs_in - abs_out) | round(2) }}"
+  co2: >
+    {{ states(sensor_co2[0]) | float(0) if sensor_co2 | length > 0 else 0 }}
   invalid_sensor: "{{ rh_in <= 1 or abs_in <= 0.5 }}"
 
   # Kontext
@@ -276,10 +299,12 @@ variables:
 
   # Bewertungslogik
   high_humidity:  "{{ rh_in > threshold_relative and diff > threshold_difference }}"
-  bad_co2:        "{{ sensor_co2 != '' and co2 > co2_threshold }}"
-  co2_urgent:     "{{ sensor_co2 != '' and co2 > co2_threshold_urgent }}"
+  bad_co2: >
+    {{ sensor_co2 | length > 0 and co2 > co2_threshold }}
+  co2_urgent: >
+    {{ sensor_co2 | length > 0 and co2 > co2_threshold_urgent }}
   summer_block:   "{{ abs_out > abs_in + (summer_block_threshold | float) }}"
-  frost_close:    "{{ sensor_outdoor_temp != '' and temp_out < (frost_threshold | float) }}"
+  frost_close:    "{{ temp_out < (frost_threshold | float) }}"
 
   # [GEÄNDERT] should_vent: co2_urgent überschreibt Sommer-Block
   should_vent: >
@@ -358,8 +383,8 @@ triggers:
     at: !input time_start
   - trigger: time
     at: !input time_end
-  - trigger: time_pattern
-    minutes: "/5"
+  - trigger: state
+    entity_id: !input co2_sensor   # [] wenn leer → wird still ignoriert ✓
 
 # -----------------------
 # Actions
@@ -372,7 +397,7 @@ action:
       - conditions: "{{ should_vent and co2_urgent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
-              for_each: "{{ notify_targets }}"
+              for_each: "{{ home_devices }}"
               sequence:
                 - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
@@ -388,8 +413,8 @@ action:
             data:
               title: "⚠️ {{ area }} - Dringend lüften"
               message: >
-                CO₂ kritisch! {{ co2 | round(0) }} ppm. Sofort lüften!
-                Innen: {{ rh_in | round(1) }} % rF, Δabs: {{ diff | round(1) }} g/m³
+                CO₂ kritisch! {{ co2 | round(0) }} ppm (Grenze: {{ co2_threshold_urgent }} ppm).
+                Sofort lüften! Innen: {{ rh_in | round(1) }} % rF, Δabs: {{ diff | round(1) }} g/m³
               notification_id: "lueften_{{ area | slugify }}"
           - service: input_text.set_value
             data:
@@ -404,7 +429,7 @@ action:
       - conditions: "{{ should_vent and (status_changed or notify_due) }}"
         sequence:
           - repeat:
-              for_each: "{{ notify_targets }}"
+              for_each: "{{ home_devices }}"
               sequence:
                 - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
@@ -412,7 +437,7 @@ action:
                     message: >
                       Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                       Δabs: {{ diff | round(1) }} g/m³
-                      {%- if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                      {%- if sensor_co2 | length > 0 %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
                     data:
                       push:
                         interruption-level: time-sensitive
@@ -423,7 +448,7 @@ action:
               message: >
                 Lüften empfohlen! Innen: {{ rh_in | round(1) }} % rF,
                 Δabs: {{ diff | round(1) }} g/m³
-                {%- if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                {%- if sensor_co2 | length > 0 %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               notification_id: "lueften_{{ area | slugify }}"
           - service: input_text.set_value
             data:
@@ -438,7 +463,7 @@ action:
       - conditions: "{{ should_close and vent_duration_passed and (status_changed or notify_due) }}"
         sequence:
           - repeat:
-              for_each: "{{ notify_targets }}"
+              for_each: "{{ home_devices }}"
               sequence:
                 - service: "notify.mobile_app_{{ device_attr(repeat.item,'name') | slugify }}"
                   data:
@@ -447,7 +472,7 @@ action:
                       Fenster schließen empfohlen!
                       Innen: {{ rh_in | round(1) }} % rF, Δabs: {{ diff | round(1) }} g/m³
                       {%- if frost_close %} (Frost: {{ temp_out | round(1) }} °C){% endif %}
-                      {%- if sensor_co2 != '' %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
+                      {%- if sensor_co2 | length > 0 %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
                     data:
                       push:
                         interruption-level: time-sensitive
@@ -459,6 +484,7 @@ action:
                 Fenster schließen empfohlen!
                 Innen: {{ rh_in | round(1) }} % rF, Δabs: {{ diff | round(1) }} g/m³
                 {%- if frost_close %} (Frost: {{ temp_out | round(1) }} °C){% endif %}
+                {%- if sensor_co2 | length > 0 %}, CO₂: {{ co2 | round(0) }} ppm{% endif %}
               notification_id: "lueften_{{ area | slugify }}"
           - service: input_text.set_value
             data:
