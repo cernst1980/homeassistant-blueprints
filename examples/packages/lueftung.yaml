@@ -1,0 +1,63 @@
+# Package: config/packages/lueftung.yaml
+# Einbinden in configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+template:
+  # 1) Höchsttemperatur für den Rest des Tages aus der Wettervorhersage (stündlich aktualisiert)
+  - triggers:
+      - trigger: time_pattern
+        minutes: 5
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: fc
+    sensor:
+      - name: Wetter Höchstwert heute
+        unique_id: wetter_hoechstwert_heute
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state: >-
+          {%- set heute = now().date() -%}
+          {%- set ns = namespace(t=[]) -%}
+          {%- for f in fc['weather.forecast_home'].forecast -%}
+            {%- if as_local(as_datetime(f.datetime)).date() == heute and f.temperature is number -%}
+              {%- set ns.t = ns.t + [f.temperature] -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ (ns.t | max) if ns.t | length > 0 else none }}
+
+  # 2) Ein Lüftungsstatus-Sensor pro Raum
+  - use_blueprint:
+      path: lueftung/lueftungsstatus_raum.yaml
+      input:
+        raum: Bad
+        temp_innen: sensor.bad_temperatur
+        feuchte_innen: sensor.bad_luftfeuchtigkeit
+        fenster: binary_sensor.bad_fenster
+        temp_aussen: sensor.aussen_temperatur
+        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        tmax_heute: sensor.wetter_hochstwert_heute
+    name: Lüftung Bad
+    unique_id: lueftung_bad
+
+  - use_blueprint:
+      path: lueftung/lueftungsstatus_raum.yaml
+      input:
+        raum: Schlafzimmer
+        temp_innen: sensor.schlafzimmer_temperatur
+        feuchte_innen: sensor.schlafzimmer_luftfeuchtigkeit
+        co2: sensor.schlafzimmer_co2
+        fenster: binary_sensor.schlafzimmer_fenster
+        temp_aussen: sensor.aussen_temperatur
+        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        tmax_heute: sensor.wetter_hochstwert_heute
+        # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional, kritischste Ecke
+        # f_rsi: 0.8                                        # gut gedämmter Bestand / Neubau
+    name: Lüftung Schlafzimmer
+    unique_id: lueftung_schlafzimmer
