@@ -51,6 +51,39 @@ binary_sensor:
       - binary_sensor.fenster_kueche
 
 template:
+  # ---------- Außenwerte mit Rückfall auf den Wetterdienst (empfohlen) ----------
+  # Fällt der Außensensor aus, laufen alle Zonen mit Wetterdienst-Werten weiter.
+  # „quellen“ sorgt dafür, dass der Ausfall im Sensorbericht erscheint.
+  - sensor:
+      - name: Lüftung Außen Temperatur
+        unique_id: lueftung_aussen_temperatur
+        default_entity_id: sensor.lueftung_aussen_temperatur
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state_class: measurement
+        state: >-
+          {%- set v = states('sensor.aussen_temperatur') -%}
+          {{ v | float if is_number(v) else state_attr('weather.forecast_home', 'temperature') }}
+        availability: >-
+          {{ is_number(states('sensor.aussen_temperatur')) or is_number(state_attr('weather.forecast_home', 'temperature')) }}
+        attributes:
+          quelle: "{{ 'Sensor' if is_number(states('sensor.aussen_temperatur')) else 'Wetterdienst' }}"
+          quellen: "{{ ['sensor.aussen_temperatur'] }}"
+      - name: Lüftung Außen Luftfeuchtigkeit
+        unique_id: lueftung_aussen_luftfeuchtigkeit
+        default_entity_id: sensor.lueftung_aussen_luftfeuchtigkeit
+        device_class: humidity
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: >-
+          {%- set v = states('sensor.aussen_luftfeuchtigkeit') -%}
+          {{ v | float if is_number(v) else state_attr('weather.forecast_home', 'humidity') }}
+        availability: >-
+          {{ is_number(states('sensor.aussen_luftfeuchtigkeit')) or is_number(state_attr('weather.forecast_home', 'humidity')) }}
+        attributes:
+          quelle: "{{ 'Sensor' if is_number(states('sensor.aussen_luftfeuchtigkeit')) else 'Wetterdienst' }}"
+          quellen: "{{ ['sensor.aussen_luftfeuchtigkeit'] }}"
+
   # ---------- Übersicht mit Historie ----------
   - sensor:
       - name: Lüftung Übersicht
@@ -102,8 +135,8 @@ template:
         temp_innen: sensor.bad_temperatur
         feuchte_innen: sensor.bad_luftfeuchtigkeit
         fenster: binary_sensor.fenster_bad
-        temp_aussen: sensor.aussen_temperatur
-        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        temp_aussen: sensor.lueftung_aussen_temperatur
+        feuchte_aussen: sensor.lueftung_aussen_luftfeuchtigkeit
         tmax_heute: sensor.wetter_hoechstwert_heute
     name: Lüftung Bad
     unique_id: lueftung_bad
@@ -116,8 +149,8 @@ template:
         feuchte_innen: sensor.schlafzimmer_luftfeuchtigkeit
         co2: sensor.schlafzimmer_co2
         fenster: binary_sensor.fenster_schlafzimmer
-        temp_aussen: sensor.aussen_temperatur
-        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        temp_aussen: sensor.lueftung_aussen_temperatur
+        feuchte_aussen: sensor.lueftung_aussen_luftfeuchtigkeit
         tmax_heute: sensor.wetter_hoechstwert_heute
         # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional: kälteste Außenwandecke
         # f_rsi: 0.65                                       # Altbau; Neubau eher 0.8
@@ -131,8 +164,8 @@ template:
         temp_innen: sensor.erdgeschoss_mittel_temperatur
         feuchte_innen: sensor.erdgeschoss_mittel_luftfeuchtigkeit
         fenster: binary_sensor.erdgeschoss_aussenoffnungen
-        temp_aussen: sensor.aussen_temperatur
-        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        temp_aussen: sensor.lueftung_aussen_temperatur
+        feuchte_aussen: sensor.lueftung_aussen_luftfeuchtigkeit
         tmax_heute: sensor.wetter_hoechstwert_heute
     name: Lüftung Erdgeschoss
     unique_id: lueftung_erdgeschoss

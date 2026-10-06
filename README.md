@@ -19,16 +19,20 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   (gemessen oder über den Temperaturfaktor fRsi nach DIN 4108-2 geschätzt)
 - **Schimmelrisiko über Zeit:** gleitende Feuchtestunden (Wand-rF ≥ 80 % voll, 75–80 % halb, Abklingzeit ca. 3 Tage)
 - **CO₂** (optional): Richtwerte nach UBA; Sommer-Block bei feuchter Außenluft
+- **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,
-  Temperaturabfall, „Raumluft zu trocken“, „Außenluft feuchter“, „außen wärmer“
+  Temperaturabfall, „Raumluft zu trocken“, „Außenluft feuchter“, „außen wärmer“.
+  Ab 18 °C außen keine Maximaldauer und keine Plateau-Regel (kein Heizverlust – Dauerlüften erlaubt)
 - **Robustheit:** Hysterese, Pause nach dem Lüften, Plausibilitätsgrenzen, veraltete Werte,
   Schutz vor eingefrorenen Sensoren, Modus ohne Fensterkontakt (Öffnen wird aus Messwerten geschätzt)
 
 ### Benachrichtigungen
 
 - „Jetzt lüften“ gebündelt, nur an Geräte zu Hause, Ruhezeit, Querlüften-Tipp, Regen-/Unwetter-Hinweis
-- „Fenster schließen“ pro Zone mit Erinnerung
+- „Fenster schließen“ pro Zone mit Erinnerung; in der Ruhezeit erst morgens (z. B. gekipptes Schlafzimmerfenster)
+- Offene Empfehlungen werden nach der Ruhezeit und nach dem Heimkommen nachgeholt
+- Erinnerung bei Nichtbeachtung („lüften“ alle 30 Min., „dringend“ alle 15 Min.)
 - Warnung bei offenen Fenstern beim Verlassen des Hauses und bei Regen/Unwetter
 - Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt
 
@@ -48,6 +52,16 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
    https://github.com/cernst1980/homeassistant-blueprints/blob/main/blueprints/automation/lueftung/lueftung_benachrichtigung.yaml
    ```
 5. Automation aus dem Blueprint anlegen.
+
+### Sensorausfälle
+
+- Jede Bewertung läuft, solange ihre Werte da sind (CO₂ allein, Feuchte/Schimmel mit Innen- und Außenwerten,
+  Grundlüftung mit dem Fenster). Fehlende Teile stehen im Attribut `einschraenkungen`.
+- Gruppen-Mittelwerte rechnen mit den verbleibenden Sensoren weiter.
+- Fensterkontakt nicht verfügbar → Öffnen wird aus den Messwerten geschätzt.
+- Außenwerte optional mit Rückfall auf den Wetterdienst (siehe Beispiel-Package).
+- Status `keine_daten`, wenn eine Zone keinen Innenwert mehr hat → sofortige Meldung nach 30 Min.
+- Täglicher Sensorbericht: ausgefallene Einzel- und Gruppensensoren, Einschränkungen, schwache Batterien.
 
 ### Hinweise
 

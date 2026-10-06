@@ -193,6 +193,20 @@ blueprint:
           default: 21
           selector:
             number: { min: 16, max: 26, step: 0.5, unit_of_measurement: "°C", mode: box }
+        grundlueftung_h:
+          name: Grundlüftung spätestens alle (Std.)
+          description: >-
+            Nur für Zonen ohne (gültigen) CO₂-Wert: Wurde so lange nicht gelüftet, wird Lüften
+            empfohlen. 0 = aus. Nicht bei deutlich wärmerer oder (Sommer-Block) feuchterer Außenluft.
+          default: 8
+          selector:
+            number: { min: 0, max: 48, step: 1, unit_of_measurement: h, mode: box }
+        grundlueftung_min:
+          name: Als gelüftet zählt ab (Min. offen)
+          description: Kürzeres Öffnen (z. B. Durchgang durch die Terrassentür) zählt nicht.
+          default: 3
+          selector:
+            number: { min: 1, max: 30, step: 1, unit_of_measurement: min, mode: box }
         cooldown:
           name: Pause nach dem Lüften (Min.)
           description: So lange nach dem Schließen nur „dringend“ melden.
@@ -257,6 +271,8 @@ actions:
       e_tmax: !input tmax_heute
       hitze_schwelle: !input hitze_schwelle
       hitze_vorkuehlen_ab: !input hitze_vorkuehlen_ab
+      grundlueftung_h: !input grundlueftung_h
+      grundlueftung_min: !input grundlueftung_min
 
   # Eigene Entity-ID: über `this`, sonst über das Attribut `raum`.
   # Vorherige Werte werden einzeln per state_attr() gelesen (nie als ganzes Dict).
@@ -272,7 +288,7 @@ actions:
   # Zeitpunkt der letzten Sensormeldung (last_reported zählt auch unveränderte Werte)
   - variables:
       now_ts: "{{ as_timestamp(now()) | int }}"
-      kontakt: "{{ e_win is string and e_win | length > 0 }}"
+      kontakt: "{{ e_win is string and e_win | length > 0 and states(e_win) not in ['unavailable', 'unknown'] }}"
       prev: "{{ states(selbst) if selbst else 'unknown' }}"
       ts_t_in: >-
         {%- set st = expand(e_t_in) | first if e_t_in else none -%}
@@ -327,6 +343,36 @@ actions:
           {%- set ns.l = ns.l + [name] -%}
         {%- endfor -%}
         {{- ns.l -}}
+
+  # Sensorprobleme (inkl. Mitglieder von Gruppen / Quellen von Rückfall-Sensoren)
+  - variables:
+      sensorprobleme: >-
+        {%- set ns = namespace(l=[]) -%}
+        {%- for name, ent in [('Temperatur innen', e_t_in), ('Feuchte innen', e_rh_in), ('CO₂', e_co2),
+              ('Temperatur außen', e_t_out), ('Feuchte außen', e_rh_out), ('Wandtemperatur', e_t_wand),
+              ('Fensterkontakt', e_win)] if ent -%}
+          {%- set quellen = state_attr(ent, 'entity_id') or state_attr(ent, 'quellen') -%}
+          {%- if quellen is iterable and quellen is not string -%}
+            {%- for m in quellen if states(m) in ['unavailable', 'unknown'] -%}
+              {%- set ns.l = ns.l + [name ~ ': ' ~ (state_attr(m, 'friendly_name') or m) ~ ' (nicht verfügbar)'] -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- if states(ent) in ['unavailable', 'unknown'] -%}
+            {%- set ns.l = ns.l + [name ~ ': ' ~ (state_attr(ent, 'friendly_name') or ent) ~ ' (nicht verfügbar)'] -%}
+          {%- elif name in veraltet -%}
+            {%- set ns.l = ns.l + [name ~ ': ' ~ (state_attr(ent, 'friendly_name') or ent) ~ ' (keine Meldung seit ' ~ max_alter ~ ' Min.)'] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{- ns.l -}}
+      einschraenkungen: >-
+        {%- set l = [] -%}
+        {%- if e_co2 and co2 is not number -%}{%- set l = l + ['CO₂-Bewertung'] -%}{%- endif -%}
+        {%- if not (t_in is number and rh_in is number and t_out is number and rh_out is number) -%}
+          {%- set l = l + ['Feuchte-/Schimmelbewertung'] -%}{%- endif -%}
+        {%- if not (t_in is number and t_out is number) -%}{%- set l = l + ['Kühlen/Hitze'] -%}{%- endif -%}
+        {%- if e_win and not kontakt -%}{%- set l = l + ['Fensterkontakt (Öffnen wird geschätzt)'] -%}{%- endif -%}
+        {{- l -}}
+      keine_daten: "{{ t_in is not number and rh_in is not number and co2 is not number }}"
 
   # Absolute Feuchte (Magnus) und Wandtemperatur
   - variables:
@@ -417,7 +463,9 @@ actions:
         {%- elif kontakt -%}{{- as_timestamp((expand(e_win) | first).last_changed, now_ts) | int -}}
         {%- else -%}{{- now_ts - 180 -}}{%- endif -%}
       geschlossen_seit: >-
-        {%- set war_offen = (state_attr(selbst, 'offen_seit') if selbst else none) is number -%}
+        {%- set alt_offen = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
+        {#- Pause nur nach echtem Lüften (mind. grundlueftung_min offen), nicht nach einem Durchgang -#}
+        {%- set war_offen = alt_offen is number and (now_ts - alt_offen) >= (grundlueftung_min | float(3)) * 60 -%}
         {%- set alt = (state_attr(selbst, 'geschlossen_seit') if selbst else none) -%}
         {%- if win_open -%}{{- none -}}
         {%- elif war_offen -%}{{- (as_timestamp((expand(e_win) | first).last_changed, now_ts) | int) if kontakt else now_ts -}}
@@ -444,7 +492,15 @@ actions:
         {%- elif t_out < 0 -%}5
         {%- elif t_out < 10 -%}10
         {%- elif t_out < 18 -%}15
-        {%- else -%}30{%- endif -%}
+        {%- else -%}0{%- endif -%}
+
+  # Letzte echte Lüftung (Fenster mind. grundlueftung_min offen). Erster Lauf: jetzt.
+  - variables:
+      zuletzt_gelueftet: >-
+        {%- set alt = (state_attr(selbst, 'zuletzt_gelueftet') if selbst else none) -%}
+        {%- if win_open and offen_min >= (grundlueftung_min | float(3)) -%}{{- now_ts -}}
+        {%- elif alt is number -%}{{- alt -}}
+        {%- else -%}{{- now_ts -}}{%- endif -%}
 
   # Plateau-Absicherung: seit dem Öffnen mind. zwei verschiedene Sensormeldungen
   - variables:
@@ -501,6 +557,12 @@ actions:
           {%- if kuehlen -%}
             {%- set ns.gruende = ns.gruende + ['Kühlen, außen ' ~ t_out ~ ' °C' ~ ((' – heute bis ' ~ (tmax | round(0) | int) ~ ' °C') if hitzetag else '')] -%}
           {%- endif -%}
+          {%- set seit_h = ((now_ts - zuletzt_gelueftet) / 3600) if zuletzt_gelueftet is number else 0 -%}
+          {%- if (grundlueftung_h | float(0)) > 0 and co2 is not number and not blockiert
+                and seit_h >= (grundlueftung_h | float(0))
+                and (t_in is not number or t_out is not number or t_out <= t_in + 1) -%}
+            {%- set ns.gruende = ns.gruende + ['Grundlüftung, seit ' ~ (seit_h | round(0) | int) ~ ' h nicht gelüftet'] -%}
+          {%- endif -%}
           {%- set rest = ((cooldown | int) * 60 - (now_ts - geschlossen_seit)) if geschlossen_seit is number else 0 -%}
           {%- if rest > 0 and not ns.dringend and ns.gruende | length > 0 -%}
             {%- set status = 'ok' -%}
@@ -520,7 +582,8 @@ actions:
             {%- if hitzetag and not co2_hoch and offen_min >= 2 and t_in is number and t_in < hitze_vorkuehlen_ab -%}
               {%- set ns.gruende = ns.gruende + ['Raum vorgekühlt (' ~ t_in ~ ' °C)'] -%}
             {%- endif -%}
-            {%- if not kuehlen and offen_min >= max_min -%}
+            {#- max_min 0 = ab 18 °C außen keine Maximaldauer (kein Heizverlust, Dauerlüften ok) -#}
+            {%- if not kuehlen and max_min > 0 and offen_min >= max_min -%}
               {%- set ns.gruende = ns.gruende + ['seit ' ~ (offen_min | int) ~ ' Min. offen'] -%}
             {%- endif -%}
             {%- if not kuehlen and t_in is number and temp_bei_oeffnung is number
@@ -538,7 +601,8 @@ actions:
                   and t_in is number and t_out is number and t_out >= t_in -%}
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}
-            {%- if not kuehlen and offen_min >= 4 and co2_ok and ah_ok -%}
+            {#- Plateau nur in der Heizsaison: ohne Heizverlust (max_min 0) kein Grund zum Schließen -#}
+            {%- if not kuehlen and max_min > 0 and offen_min >= 4 and co2_ok and ah_ok -%}
               {%- set ns.gruende = ns.gruende + ['Luft ist ausgetauscht'] -%}
             {%- endif -%}
           {%- endif -%}
@@ -553,14 +617,14 @@ actions:
         {%- else -%}{{- now_ts -}}{%- endif -%}
 
 sensor:
-  state: "{{ ergebnis.status }}"
-  availability: "{{ t_in is number and rh_in is number and t_out is number and rh_out is number }}"
+  state: "{{ 'keine_daten' if keine_daten else ergebnis.status }}"
   icon: >-
     {{ {'ok': 'mdi:check-circle-outline',
         'lueften': 'mdi:weather-windy',
         'dringend': 'mdi:alert-circle-outline',
         'offen': 'mdi:window-open-variant',
-        'schliessen': 'mdi:window-closed-variant'}.get(ergebnis.status, 'mdi:help-circle-outline') }}
+        'schliessen': 'mdi:window-closed-variant',
+        'keine_daten': 'mdi:alert-outline'}.get('keine_daten' if keine_daten else ergebnis.status, 'mdi:help-circle-outline') }}
   attributes:
     raum: "{{ raum }}"
     t_innen: "{{ t_in }}"
@@ -568,7 +632,9 @@ sensor:
     schimmel_stunden: "{{ schimmel_h }}"
     schimmel_ts: "{{ now_ts }}"
     hitzetag: "{{ hitzetag }}"
-    grund: "{{ ergebnis.grund }}"
+    grund: "{{ ('Keine Innenwerte – ' ~ (sensorprobleme | join(', ') or 'Sensoren prüfen')) if keine_daten else ergebnis.grund }}"
+    sensorprobleme: "{{ sensorprobleme }}"
+    einschraenkungen: "{{ [] if keine_daten else einschraenkungen }}"
     fenster_quelle: "{{ 'kontakt' if kontakt else 'geschaetzt' }}"
     vermutet_offen: "{{ (not kontakt) and win_open }}"
     veraltet: "{{ veraltet }}"
@@ -589,5 +655,6 @@ sensor:
     temp_bei_oeffnung: "{{ temp_bei_oeffnung }}"
     t_min_offen: "{{ t_min_offen }}"
     geschlossen_seit: "{{ geschlossen_seit }}"
+    zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
     schliessen_seit: "{{ schliessen_seit }}"
     verlauf: "{{ verlauf }}"
