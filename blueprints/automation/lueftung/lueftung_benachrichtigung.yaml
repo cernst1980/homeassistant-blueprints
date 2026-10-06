@@ -211,7 +211,7 @@ variables:
     {%- set n = now().strftime('%H:%M:%S') -%}
     {%- if ruhe_beginn > ruhe_ende -%}{{- n >= ruhe_beginn or n < ruhe_ende -}}
     {%- elif ruhe_beginn < ruhe_ende -%}{{- n >= ruhe_beginn and n < ruhe_ende -}}
-    {%- else -%}false{%- endif -%}
+    {%- else -%}{{- false -}}{%- endif -%}
 
 actions:
   - choose:

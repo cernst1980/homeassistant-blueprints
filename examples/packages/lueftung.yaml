@@ -1,10 +1,71 @@
-# Package: config/packages/lueftung.yaml
+# Beispiel-Package: config/packages/lueftung.yaml
 # Einbinden in configuration.yaml:
 #   homeassistant:
 #     packages: !include_dir_named packages
 #
+# Entity-IDs anpassen. Die Status-Sensoren heißen sensor.luftung_<zone>
+# (HA macht aus „Lüftung“ → „luftung“).
+
+# ---------- Datenbank entlasten ----------
+# Die Zonen-Sensoren schreiben jede Minute neue Attribute. Sie brauchen keine Historie,
+# dafür gibt es unten sensor.lueftung_uebersicht. Hat configuration.yaml schon einen
+# recorder:-Block mit exclude, die Zeile dort ergänzen und diesen Block löschen.
+recorder:
+  exclude:
+    entity_globs:
+      - sensor.luftung_*
+
+# ---------- Optional: Mittelwert für offene Bereiche (mehrere Sensoren, eine Luft) ----------
+sensor:
+  - platform: group
+    name: Erdgeschoss Mittel Temperatur
+    unique_id: lueftung_eg_mittel_temperatur
+    type: mean
+    ignore_non_numeric: true
+    device_class: temperature
+    unit_of_measurement: "°C"
+    state_class: measurement
+    entities:
+      - sensor.wohnzimmer_temperatur
+      - sensor.esszimmer_temperatur
+  - platform: group
+    name: Erdgeschoss Mittel Luftfeuchtigkeit
+    unique_id: lueftung_eg_mittel_luftfeuchtigkeit
+    type: mean
+    ignore_non_numeric: true
+    device_class: humidity
+    unit_of_measurement: "%"
+    state_class: measurement
+    entities:
+      - sensor.wohnzimmer_luftfeuchtigkeit
+      - sensor.esszimmer_luftfeuchtigkeit
+
+# ---------- Optional: mehrere Außenöffnungen einer Zone ----------
+binary_sensor:
+  - platform: group
+    name: Erdgeschoss Außenöffnungen
+    unique_id: lueftung_eg_aussenoeffnungen
+    device_class: window
+    entities:
+      - binary_sensor.terrassentuer
+      - binary_sensor.fenster_kueche
+
 template:
-  # 1) Höchsttemperatur für den Rest des Tages aus der Wettervorhersage (stündlich aktualisiert)
+  # ---------- Übersicht mit Historie ----------
+  - sensor:
+      - name: Lüftung Übersicht
+        unique_id: lueftung_uebersicht
+        default_entity_id: sensor.lueftung_uebersicht
+        icon: mdi:home-thermometer-outline
+        state: >-
+          {{ ['sensor.luftung_bad', 'sensor.luftung_schlafzimmer', 'sensor.luftung_erdgeschoss']
+             | select('is_state', ['lueften', 'dringend', 'schliessen']) | list | count }}
+        attributes:
+          bad: "{{ states('sensor.luftung_bad') }}"
+          schlafzimmer: "{{ states('sensor.luftung_schlafzimmer') }}"
+          erdgeschoss: "{{ states('sensor.luftung_erdgeschoss') }}"
+
+  # ---------- Höchsttemperatur heute (Rest des Tages) aus der Vorhersage ----------
   - triggers:
       - trigger: time_pattern
         minutes: 5
@@ -20,6 +81,7 @@ template:
     sensor:
       - name: Wetter Höchstwert heute
         unique_id: wetter_hoechstwert_heute
+        default_entity_id: sensor.wetter_hoechstwert_heute
         device_class: temperature
         unit_of_measurement: "°C"
         state: >-
@@ -32,17 +94,17 @@ template:
           {%- endfor -%}
           {{ (ns.t | max) if ns.t | length > 0 else none }}
 
-  # 2) Ein Lüftungsstatus-Sensor pro Raum
+  # ---------- Zonen ----------
   - use_blueprint:
       path: lueftung/lueftungsstatus_raum.yaml
       input:
         raum: Bad
         temp_innen: sensor.bad_temperatur
         feuchte_innen: sensor.bad_luftfeuchtigkeit
-        fenster: binary_sensor.bad_fenster
+        fenster: binary_sensor.fenster_bad
         temp_aussen: sensor.aussen_temperatur
         feuchte_aussen: sensor.aussen_luftfeuchtigkeit
-        tmax_heute: sensor.wetter_hochstwert_heute
+        tmax_heute: sensor.wetter_hoechstwert_heute
     name: Lüftung Bad
     unique_id: lueftung_bad
 
@@ -53,11 +115,34 @@ template:
         temp_innen: sensor.schlafzimmer_temperatur
         feuchte_innen: sensor.schlafzimmer_luftfeuchtigkeit
         co2: sensor.schlafzimmer_co2
-        fenster: binary_sensor.schlafzimmer_fenster
+        fenster: binary_sensor.fenster_schlafzimmer
         temp_aussen: sensor.aussen_temperatur
         feuchte_aussen: sensor.aussen_luftfeuchtigkeit
-        tmax_heute: sensor.wetter_hochstwert_heute
-        # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional, kritischste Ecke
-        # f_rsi: 0.8                                        # gut gedämmter Bestand / Neubau
+        tmax_heute: sensor.wetter_hoechstwert_heute
+        # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional: kälteste Außenwandecke
+        # f_rsi: 0.65                                       # Altbau; Neubau eher 0.8
     name: Lüftung Schlafzimmer
     unique_id: lueftung_schlafzimmer
+
+  - use_blueprint:
+      path: lueftung/lueftungsstatus_raum.yaml
+      input:
+        raum: Erdgeschoss
+        temp_innen: sensor.erdgeschoss_mittel_temperatur
+        feuchte_innen: sensor.erdgeschoss_mittel_luftfeuchtigkeit
+        fenster: binary_sensor.erdgeschoss_aussenoffnungen
+        temp_aussen: sensor.aussen_temperatur
+        feuchte_aussen: sensor.aussen_luftfeuchtigkeit
+        tmax_heute: sensor.wetter_hoechstwert_heute
+    name: Lüftung Erdgeschoss
+    unique_id: lueftung_erdgeschoss
+
+  # Keller: erdberührte Wände ≈ Raumtemperatur, kein Kühlen, strenger Sommer-Block
+  # - use_blueprint:
+  #     path: lueftung/lueftungsstatus_raum.yaml
+  #     input:
+  #       raum: Keller
+  #       ...
+  #       f_rsi: 0.9
+  #       kuehlen_aktiv: false
+  #       sommer_block: 1.0

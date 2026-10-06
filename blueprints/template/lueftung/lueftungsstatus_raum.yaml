@@ -203,10 +203,12 @@ blueprint:
           name: Sensorwert veraltet nach (Min.)
           description: >-
             Ohne neue Meldung in dieser Zeit wird der Wert ignoriert. Fehlen Pflichtwerte,
-            wird der Raum „nicht verfügbar“. Bei Sensoren, die nur bei Änderung melden, nicht zu knapp wählen.
-          default: 60
+            wird der Raum „nicht verfügbar“. Viele Sensoren (BLE, Zigbee) melden nur bei
+            Wertänderung – bei stabiler Raumluft kann das über eine Stunde dauern.
+            Echte Ausfälle meldet die Integration meist selbst als „nicht verfügbar“.
+          default: 180
           selector:
-            number: { min: 10, max: 240, step: 5, unit_of_measurement: min, mode: box }
+            number: { min: 10, max: 720, step: 10, unit_of_measurement: min, mode: box }
         annahme_zu:
           name: Ohne Fensterkontakt – als geschlossen annehmen nach (Min.)
           description: >-
@@ -256,11 +258,22 @@ actions:
       hitze_schwelle: !input hitze_schwelle
       hitze_vorkuehlen_ab: !input hitze_vorkuehlen_ab
 
+  # Eigene Entity-ID: über `this`, sonst über das Attribut `raum`.
+  # Vorherige Werte werden einzeln per state_attr() gelesen (nie als ganzes Dict).
+  - variables:
+      selbst: >-
+        {%- if this is defined and this.entity_id is defined and this.entity_id is string -%}{{- this.entity_id -}}
+        {%- else -%}
+          {%- set k = states.sensor | selectattr('attributes.raum', 'defined')
+                | selectattr('attributes.raum', 'eq', raum) | map(attribute='entity_id') | list -%}
+          {{- k[0] if k | length > 0 else '' -}}
+        {%- endif -%}
+
   # Zeitpunkt der letzten Sensormeldung (last_reported zählt auch unveränderte Werte)
   - variables:
       now_ts: "{{ as_timestamp(now()) | int }}"
       kontakt: "{{ e_win is string and e_win | length > 0 }}"
-      a: "{{ this.attributes if this is defined else {} }}"
+      prev: "{{ states(selbst) if selbst else 'unknown' }}"
       ts_t_in: >-
         {%- set st = expand(e_t_in) | first if e_t_in else none -%}
         {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
@@ -304,7 +317,6 @@ actions:
       t_wand_sensor: >-
         {%- set v = (states(e_t_wand) | float(none)) if e_t_wand else none -%}
         {{- v if (e_t_wand and ts_t_wand >= grenze and v is number and -20 <= v <= 50) else none -}}
-      prev: "{{ this.state if this is defined else 'unknown' }}"
       tmax: "{{ (states(e_tmax) | float(none)) if e_tmax else none }}"
       veraltet: >-
         {%- set ns = namespace(l=[]) -%}
@@ -339,7 +351,7 @@ actions:
         {{- ([ah_in * (273.15 + t_wand) / (2.1674 * sat), 100] | min) | round(1) -}}
         {%- else -%}{{- none -}}{%- endif -%}
       verlauf: >-
-        {%- set alt = a.get('verlauf', []) -%}
+        {%- set alt = ((state_attr(selbst, 'verlauf') if selbst else none) or []) -%}
         {%- set alt = alt if (alt is iterable and alt is not string and alt is not mapping) else [] -%}
         {%- set neu = (alt | selectattr('t', 'gt', now_ts - 600) | list)
               + [{'t': now_ts, 'co2': (co2 | int) if co2 is number else none, 'rh': rh_in, 'ah': ah_in, 'ti': t_in, 'tc': ts_co2, 'th': ts_rh_in}] -%}
@@ -349,9 +361,9 @@ actions:
   - variables:
       # Schimmel-Index: gleitende Feuchtestunden, exponentiell abklingend (τ = 72 h)
       schimmel_h: >-
-        {%- set alt = a.get('schimmel_stunden', 0) -%}
+        {%- set alt = ((state_attr(selbst, 'schimmel_stunden') if selbst else none) or 0) -%}
         {%- set alt = alt if alt is number else 0 -%}
-        {%- set last = a.get('schimmel_ts') -%}
+        {%- set last = (state_attr(selbst, 'schimmel_ts') if selbst else none) -%}
         {%- set dt = ([now_ts - last, 3600] | min) if (last is number and now_ts > last) else 60 -%}
         {%- set w = 1 if (rf_wand is number and rf_wand >= 80) else (0.5 if (rf_wand is number and rf_wand >= 75) else 0) -%}
         {{- (alt * e ** (0 - dt / 259200) + w * dt / 3600) | round(3) -}}
@@ -365,15 +377,15 @@ actions:
 
   - variables:
       co2_abfall: >-
-        {%- if ref is mapping and co2 is number and ref.co2 is number and now_ts > ref.t and ts_co2 > ref.t -%}
+        {%- if ref is mapping and co2 is number and ref.co2 is number and now_ts > ref.t -%}
         {{- ((ref.co2 - co2) / ((now_ts - ref.t) / 60)) | round(1) -}}
         {%- else -%}{{- none -}}{%- endif -%}
       ah_abfall: >-
-        {%- if ref is mapping and ah_in is number and ref.ah is number and now_ts > ref.t and ts_rh_in > ref.t -%}
+        {%- if ref is mapping and ah_in is number and ref.ah is number and now_ts > ref.t -%}
         {{- ((ref.ah - ah_in) / ((now_ts - ref.t) / 60)) | round(3) -}}
         {%- else -%}{{- none -}}{%- endif -%}
       t_abfall: >-
-        {%- if ref is mapping and t_in is number and ref.ti is number and now_ts > ref.t and ts_t_in > ref.t -%}
+        {%- if ref is mapping and t_in is number and ref.ti is number and now_ts > ref.t -%}
         {{- ((ref.ti - t_in) / ((now_ts - ref.t) / 60)) | round(2) -}}
         {%- else -%}{{- none -}}{%- endif -%}
 
@@ -387,10 +399,10 @@ actions:
         {{- prev in ['lueften', 'dringend'] and (t_ok or c_ok or h_ok) -}}
       win_open: >-
         {%- if kontakt -%}{{- is_state(e_win, 'on') -}}
-        {%- elif a.get('vermutet_offen', false) -%}
-          {%- set ss = a.get('schliessen_seit') -%}
-          {%- set os = a.get('offen_seit') -%}
-          {%- set tmin = a.get('t_min_offen') -%}
+        {%- elif ((state_attr(selbst, 'vermutet_offen') if selbst else none) or false) -%}
+          {%- set ss = (state_attr(selbst, 'schliessen_seit') if selbst else none) -%}
+          {%- set os = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
+          {%- set tmin = (state_attr(selbst, 't_min_offen') if selbst else none) -%}
           {%- set zu = (ss is number and now_ts - ss >= (annahme_zu | int) * 60)
                 or (os is number and now_ts - os >= 3600)
                 or (tmin is number and t_in is number and t_in - tmin >= 0.5) -%}
@@ -399,22 +411,22 @@ actions:
 
   - variables:
       offen_seit: >-
-        {%- set alt = a.get('offen_seit') -%}
+        {%- set alt = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
         {%- if not win_open -%}{{- none -}}
         {%- elif alt is number -%}{{- alt -}}
-        {%- elif kontakt -%}{{- as_timestamp(states[e_win].last_changed) | int -}}
+        {%- elif kontakt -%}{{- as_timestamp((expand(e_win) | first).last_changed, now_ts) | int -}}
         {%- else -%}{{- now_ts - 180 -}}{%- endif -%}
       geschlossen_seit: >-
-        {%- set war_offen = a.get('offen_seit') is number -%}
-        {%- set alt = a.get('geschlossen_seit') -%}
+        {%- set war_offen = (state_attr(selbst, 'offen_seit') if selbst else none) is number -%}
+        {%- set alt = (state_attr(selbst, 'geschlossen_seit') if selbst else none) -%}
         {%- if win_open -%}{{- none -}}
-        {%- elif war_offen -%}{{- (as_timestamp(states[e_win].last_changed) | int) if kontakt else now_ts -}}
+        {%- elif war_offen -%}{{- (as_timestamp((expand(e_win) | first).last_changed, now_ts) | int) if kontakt else now_ts -}}
         {%- elif alt is number and now_ts - alt < (cooldown | int) * 60 -%}{{- alt -}}
         {%- else -%}{{- none -}}{%- endif -%}
 
   - variables:
       temp_bei_oeffnung: >-
-        {%- set alt = a.get('temp_bei_oeffnung') -%}
+        {%- set alt = (state_attr(selbst, 'temp_bei_oeffnung') if selbst else none) -%}
         {%- if not win_open -%}{{- none -}}
         {%- elif alt is number -%}{{- alt -}}
         {%- else -%}
@@ -422,7 +434,7 @@ actions:
           {{- vor[-1] if vor | length > 0 else t_in -}}
         {%- endif -%}
       t_min_offen: >-
-        {%- set alt = a.get('t_min_offen') -%}
+        {%- set alt = (state_attr(selbst, 't_min_offen') if selbst else none) -%}
         {%- if not win_open or t_in is not number -%}{{- none if not win_open else alt -}}
         {%- elif alt is number -%}{{- [alt, t_in] | min -}}
         {%- else -%}{{- t_in -}}{%- endif -%}
@@ -440,12 +452,12 @@ actions:
         {%- if co2_abfall is number and offen_seit is number -%}
           {%- set neu = verlauf | map(attribute='tc') | select('number') | select('gt', offen_seit) | unique | list -%}
           {{- neu | length >= 2 -}}
-        {%- else -%}false{%- endif -%}
+        {%- else -%}{{- false -}}{%- endif -%}
       ah_rate_gueltig: >-
         {%- if ah_abfall is number and offen_seit is number -%}
           {%- set neu = verlauf | map(attribute='th') | select('number') | select('gt', offen_seit) | unique | list -%}
           {{- neu | length >= 2 -}}
-        {%- else -%}false{%- endif -%}
+        {%- else -%}{{- false -}}{%- endif -%}
 
   # Entscheidung
   - variables:
@@ -498,7 +510,7 @@ actions:
           {%- endif -%}
         {%- else -%}
           {%- if prev == 'schliessen' -%}
-            {%- set ns.gruende = [a.get('grund', '')] -%}
+            {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or '')] -%}
           {%- else -%}
             {%- set co2_hoch = co2 is number and co2 >= co2_lueften -%}
             {%- set co2_ok = co2 is not number or co2 <= co2_ziel
@@ -537,7 +549,7 @@ actions:
   - variables:
       schliessen_seit: >-
         {%- if ergebnis.status != 'schliessen' -%}{{- none -}}
-        {%- elif prev == 'schliessen' and a.get('schliessen_seit') is number -%}{{- a.get('schliessen_seit') -}}
+        {%- elif prev == 'schliessen' and (state_attr(selbst, 'schliessen_seit') if selbst else none) is number -%}{{- (state_attr(selbst, 'schliessen_seit') if selbst else none) -}}
         {%- else -%}{{- now_ts -}}{%- endif -%}
 
 sensor:
