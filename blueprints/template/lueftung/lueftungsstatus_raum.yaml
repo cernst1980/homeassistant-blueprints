@@ -98,10 +98,10 @@ blueprint:
               multiple: true
         aktiv_zustaende:
           name: Als aktiv gelten die Zustände
-          default: [on, running, printing, prepare, pause]
+          default: ["on", "running", "printing", "prepare", "pause"]
           selector:
             select:
-              options: [on, running, printing, prepare, pause, heating, slicing]
+              options: ["on", "running", "printing", "prepare", "pause", "heating", "slicing"]
               multiple: true
               custom_value: true
         aktivitaet_name:
