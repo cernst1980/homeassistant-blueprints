@@ -1,0 +1,162 @@
+blueprint:
+  name: Tank-Assistent – Benachrichtigungen
+  description: >-
+    Verschickt die Meldungen der AppDaemon-App „Tank-Assistent“ (Event
+    `tank_assistent_notify`) aufs Handy. Optional ergänzt eine KI-Aufgabe
+    (z. B. Google Gemini) eine kurze Begründung – die Entscheidung selbst
+    trifft immer die App. Buttons „Erledigt“ und „Später“ werden an die App
+    zurückgemeldet.
+  domain: automation
+  source_url: https://github.com/cernst1980/homeassistant-blueprints/blob/main/blueprints/automation/tank/tank_benachrichtigung.yaml
+  input:
+    geraete:
+      name: Handys (Companion App)
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: mobile_app
+    ki_aufgabe:
+      name: KI-Aufgabe (optional)
+      description: >-
+        Entität einer KI-Aufgabe, z. B. ai_task.google_ai_task. Leer lassen,
+        um ohne KI-Begründung zu senden.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: ai_task
+    ki_arten:
+      name: KI-Begründung für
+      default: [plan, muss, jetzt, bestaetigt, abgesagt, erinnerung, woche]
+      selector:
+        select:
+          multiple: true
+          options:
+            - { label: "Tagesplan (7 Uhr)", value: plan }
+            - { label: "Muss tanken", value: muss }
+            - { label: "Jetzt tanken (spontan)", value: jetzt }
+            - { label: "Bestätigung vor dem Termin", value: bestaetigt }
+            - { label: "Absage vor dem Termin", value: abgesagt }
+            - { label: "Erinnerung nach „Später“", value: erinnerung }
+            - { label: "Wochenbilanz", value: woche }
+            - { label: "Tankvorgang erkannt", value: tankung }
+    dringend_zeitkritisch:
+      name: „Muss tanken“ als zeitkritische Mitteilung (iOS)
+      description: Durchbricht den Fokus-Modus (interruption-level time-sensitive).
+      default: true
+      selector:
+        boolean:
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: event
+    event_type: tank_assistent_notify
+    id: meldung
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: TANK_ERLEDIGT
+    id: erledigt
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: TANK_SPAETER
+    id: spaeter
+
+variables:
+  geraete: !input geraete
+  ki_aufgabe: !input ki_aufgabe
+  ki_arten: !input ki_arten
+  zeitkritisch: !input dringend_zeitkritisch
+  ziele: >-
+    {%- set ns = namespace(l=[]) -%}
+    {%- for d in geraete -%}
+      {%- set ns.l = ns.l + ['notify.mobile_app_' ~ (device_attr(d, 'name') | slugify)] -%}
+    {%- endfor -%}
+    {{ ns.l }}
+
+actions:
+  - choose:
+      # ------------------------------------------------------------ Meldung
+      - conditions:
+          - condition: trigger
+            id: meldung
+        sequence:
+          - variables:
+              art: "{{ trigger.event.data.kind }}"
+              titel: "{{ trigger.event.data.title }}"
+              text: "{{ trigger.event.data.message }}"
+              fakten: "{{ trigger.event.data.facts | default('{}') }}"
+              mit_buttons: "{{ trigger.event.data.actions | default(false) }}"
+              begruendung: ""
+          - if:
+              - condition: template
+                value_template: "{{ ki_aufgabe not in ['', none] and art in ki_arten }}"
+            then:
+              - action: ai_task.generate_data
+                continue_on_error: true
+                response_variable: ki
+                data:
+                  entity_id: "{{ ki_aufgabe }}"
+                  task_name: Tank-Assistent Begründung
+                  instructions: >-
+                    Du bist ein Tank-Assistent. Schreibe GENAU EINEN kurzen Satz
+                    (max. 160 Zeichen) auf Deutsch, der die folgende Empfehlung für
+                    den Fahrer verständlich begründet (z. B. Preistrend, 12-Uhr-Regel:
+                    Preise steigen nur um 12 Uhr und fallen danach, Tankstand).
+                    Ändere die Empfehlung nicht, nenne keine neuen Zahlen, keine
+                    Anrede, keine Emojis, kein Markdown.
+
+                    Empfehlung: {{ titel }} – {{ text }}
+
+                    Fakten (JSON): {{ fakten }}
+              - variables:
+                  begruendung: >-
+                    {%- set t = (ki.data if ki is defined and ki.data is string else '') | trim -%}
+                    {{ t if 10 < (t | length) < 300 else '' }}
+          - repeat:
+              for_each: "{{ ziele }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "⛽ {{ titel }}"
+                    message: |-
+                      {{ text }}{% if begruendung %}
+
+                      {{ begruendung }}{% endif %}
+                    data:
+                      tag: tank_assistent
+                      group: tank_assistent
+                      push:
+                        interruption-level: >-
+                          {{ 'time-sensitive' if (zeitkritisch and art == 'muss') else 'active' }}
+                      actions: >-
+                        {{ [{'action': 'TANK_ERLEDIGT', 'title': 'Erledigt'},
+                            {'action': 'TANK_SPAETER', 'title': 'Später erinnern'}]
+                           if mit_buttons else [] }}
+
+      # ------------------------------------------------------------ Buttons
+      - conditions:
+          - condition: trigger
+            id: [erledigt, spaeter]
+        sequence:
+          - event: tank_assistent_action
+            event_data:
+              action: "{{ 'erledigt' if trigger.id == 'erledigt' else 'spaeter' }}"
+          - if:
+              - condition: trigger
+                id: erledigt
+            then:
+              - repeat:
+                  for_each: "{{ ziele }}"
+                  sequence:
+                    - action: "{{ repeat.item }}"
+                      continue_on_error: true
+                      data:
+                        message: clear_notification
+                        data:
+                          tag: tank_assistent
