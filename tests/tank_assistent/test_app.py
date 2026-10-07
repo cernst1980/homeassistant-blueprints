@@ -102,3 +102,46 @@ def test_lead_reminder_confirms(tmp_path):
     app._lead_reminder({"slot": best.start.isoformat()})
     kinds = [e[1]["kind"] for e in app.events]
     assert kinds and kinds[-1] in ("bestaetigt", "abgesagt")
+
+
+def test_restart_reschedules_reminder(tmp_path):
+    now = at(2026, 10, 26, 13, 0)
+    app = make_app(tmp_path, now, fuel_pct=30.0)
+    app.notes["reminder_for"] = "2026-10-27T11:00:00+01:00"
+    app._save()
+    app2 = tank_assistent.TankAssistent(app.args, app.states, now)
+    app2.initialize()
+    assert "reminder_for" not in app2.notes
+
+
+def test_station_buttons_and_action(tmp_path):
+    now = at(2026, 10, 28, 10, 0)
+    app = make_app(tmp_path, now, fuel_pct=30.0)
+    app._replan({})
+    app._send_plan("plan")
+    ev = app.events[-1][1]
+    assert ev["actions"] and ev["buttons"][-1]["action"] == "TANK_SPAETER"
+    station = ev["buttons"][1]["action"].split(":", 1)[1]
+    assert station in app.stations
+    app._on_action("tank_assistent_action", {"action": "erledigt", "station": station}, {})
+    assert app.notes["done_station"] == station
+
+
+def test_weekend_plan_time(tmp_path):
+    now = at(2026, 10, 31, 7, 0)            # Samstag
+    app = make_app(tmp_path, now, fuel_pct=20.0)
+    app.plan_time_free = "08:30:00"
+    app._morning({"tag": "werktag"})
+    assert not app.events                  # Werktags-Lauf greift am Samstag nicht
+    app._morning({"tag": "frei"})
+    assert app.events
+
+
+def test_evening_check_only_when_tight(tmp_path):
+    now = at(2026, 10, 28, 19, 0)           # Mittwoch, morgen Bürotag
+    app = make_app(tmp_path, now, fuel_pct=80.0)
+    app._evening({})
+    assert not app.events                  # genug Sprit
+    app.states["sensor.tiguan_tankstand"]["state"] = "30.0"
+    app._evening({})
+    assert app.events and app.events[-1][1]["kind"] == "muss"

@@ -190,3 +190,12 @@ def test_evaluate_refuel_decomposition():
     assert 0 < r.exploitation <= 1
     summary = aggregate([r.to_dict()], now)
     assert summary["monat"]["tankvorgaenge"] == 1
+
+
+def test_history_keeps_last_value_of_hour():
+    # 12:05 noch alter Preis (Tankerkönig-Takt 30 Min.), 12:35 neuer Preis nach dem Sprung
+    from ta_model import PriceHistory
+    h = PriceHistory()
+    h.add("s", at(2026, 10, 7, 12, 5), 1.70)
+    h.add("s", at(2026, 10, 7, 12, 35), 1.79)
+    assert h.price_at("s", at(2026, 10, 7, 12, 50)) == 1.79

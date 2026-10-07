@@ -42,12 +42,18 @@ Bestätigungen vor dem Termin sind deshalb verlässlich.
 ## Benachrichtigungen
 
 - **7 Uhr**: Tagesplan (nur wenn heute etwas ansteht, sich der Plan der nächsten zwei Tage
-  geändert hat oder morgen eine lange Fahrt erwartet wird – „Bürofahrt-Check“)
+  geändert hat oder morgen eine lange Fahrt erwartet wird – „Bürofahrt-Check“).
+  Optional eigene Uhrzeit für Sa, So und Feiertage (`plan_uhrzeit_wochenende`)
+- Optional **Vorabend-Check** (`vorabend_uhrzeit`): meldet sich nur, wenn der Sprit für die
+  lange Fahrt am nächsten Tag knapp wird
 - **Vorlauf** (Standard 60 Min.) vor dem empfohlenen Zeitpunkt: „wie geplant“ oder „Preis zu hoch, neuer Plan“
 - **Spontan**, wenn Tanken jetzt deutlich günstiger ist als Abwarten (max. alle 3 h, nicht in der Ruhezeit)
 - **Muss tanken** einmal am Tag (zeitkritisch)
 - **Tankvorgang erkannt** mit Ersparnis und **Wochenbilanz** (sonntags)
-- Buttons **Erledigt** / **Später erinnern** (2 h)
+- Buttons **Getankt: <Tankstelle>** (empfohlene und die günstigsten offenen Tankstellen) und
+  **Später erinnern** (2 h). Mit „Getankt“ sind Tankstelle und Zeit für die Ersparnis bestätigt
+- An **Tagen mit langer Fahrt** (z. B. Bürotag) plant die App nur Tankzeiten in den
+  konfigurierten Fenstern (Standard 6–7 und 18–22 Uhr)
 
 ## Ersparnis – ehrlich gemessen
 
@@ -55,7 +61,7 @@ Vergleich mit dem **Durchschnittspreis** aller Tankstellen über alle Stunden se
 Tanken (was ein Durchschnittsfahrer im selben Zeitraum gezahlt hätte), aufgeteilt in
 **Zeitpunkt**, **Tankstellenwahl** und **Rabatt**. Die **Ausschöpfung** zeigt den Anteil der im
 Nachhinein bestmöglichen Ersparnis. Tankvorgänge werden am Anstieg des Tankstands erkannt
-(≥ 15 Prozentpunkte); mit „Erledigt“ sind Zeit und Tankstelle bestätigt, sonst geschätzt.
+(≥ 15 Prozentpunkte); mit „Getankt: …“ sind Zeit und Tankstelle bestätigt, sonst geschätzt.
 
 ## Installation
 
@@ -70,7 +76,7 @@ Companion App. Optional: eine KI-Aufgabe (z. B. Google Gemini → „Google AI T
    (z. B. mit Studio Code Server oder Samba; die Tests werden nicht benötigt).
 3. `tank_assistent.yaml.example` als `tank_assistent.yaml` speichern und die Entity-IDs
    der Fahrzeugsensoren eintragen. AppDaemon lädt die App automatisch.
-4. Im AppDaemon-Log sollte `Tank-Assistent 1.0.0 gestartet, N Tankstellen` erscheinen.
+4. Im AppDaemon-Log sollte `Tank-Assistent 1.1.0 gestartet, N Tankstellen` erscheinen.
    Unter Geräte & Dienste → MQTT taucht das Gerät **Tank-Assistent** mit seinen Sensoren auf.
 5. **Blueprint** importieren und eine Automation daraus anlegen (Handy und KI-Aufgabe wählen):
    ```
@@ -85,7 +91,8 @@ AppDaemon-Backups enthalten). Nach einem Update der Python-Dateien AppDaemon neu
 
 - Ab dem ersten Tag wird geplant (mit Startwerten). Das Preisprofil wird nach etwa **1–2 Wochen**
   belastbar, das Fahrprofil nach einigen Wochen. Der Sensor **Lernstand** zeigt die Preistage.
-- Fahrzeugdaten über das EU-Data-Act-Portal kommen verzögert (oft erst nach einer Fahrt).
+- Fahrzeugdaten über das EU-Data-Act-Portal sollten alle 15 Minuten kommen, können aber
+  verzögert sein. Der Sensor **Tankstand zuletzt geändert** zeigt, wie aktuell der Wert ist.
   Ohne Tankstand schätzt die App aus dem letzten Wert und den gefahrenen Kilometern.
 
 ## Backtest und Tests

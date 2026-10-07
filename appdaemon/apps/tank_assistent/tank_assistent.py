@@ -24,7 +24,7 @@ from ta_model import (TZ, ConsumptionModel, DiscountRule, Discounts, OpeningMode
 from ta_optimizer import StationInfo, build_slots, optimize
 from ta_text import _cap, euro, plan_message, refuel_message, weekly_message, when_label
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 STATE_VERSION = 1
 EVENT_NOTIFY = "tank_assistent_notify"
 EVENT_ACTION = "tank_assistent_action"
@@ -55,6 +55,8 @@ class TankAssistent(hass.Hass):
         self.region = a.get("ferien_region", "DE-BY")
         n = a.get("benachrichtigung", {})
         self.plan_time = str(n.get("plan_uhrzeit", "07:00:00"))
+        self.plan_time_free = n.get("plan_uhrzeit_wochenende")      # Sa, So, Feiertag (optional)
+        self.eve_time = n.get("vorabend_uhrzeit")                     # Vorabend-Check (optional)
         self.lead = int(n.get("vorlauf_min", 60))
         self.quiet = (int(n.get("ruhe_von", 21)), int(n.get("ruhe_bis", 7)))
         self.spont_gap = float(n.get("spontan_abstand_h", 3))
@@ -79,6 +81,7 @@ class TankAssistent(hass.Hass):
         self.detector = RefuelDetector(s.get("last_pct"))
         self.refuels: list[dict] = s.get("refuels", [])
         self.notes: dict = s.get("notes", {})
+        self.notes.pop("reminder_for", None)   # Timer überleben keinen Neustart -> neu planen
         self.school = [(date.fromisoformat(x[0]), date.fromisoformat(x[1]), x[2])
                        for x in s.get("school", [])]
         self.school_loaded = s.get("school_loaded")
@@ -102,7 +105,11 @@ class TankAssistent(hass.Hass):
         start = self.get_now() + timedelta(seconds=15)
         self.run_every(self._tick, start, 15 * 60)
         self.run_daily(self._close_day, "23:58:00")
-        self.run_daily(self._morning, self.plan_time)
+        self.run_daily(self._morning, self.plan_time, tag="werktag")
+        if self.plan_time_free:
+            self.run_daily(self._morning, str(self.plan_time_free), tag="frei")
+        if self.eve_time:
+            self.run_daily(self._evening, str(self.eve_time))
         self.run_daily(self._weekly, self.weekly_time)
         self.run_daily(self._refresh_holidays, "03:17:00")
         self.run_daily(self._discover_tick, "04:05:00")
@@ -238,7 +245,10 @@ class TankAssistent(hass.Hass):
         now = self._now()
         if action == "erledigt":
             self.notes["done"] = now.isoformat()
-            if self.plan and self.plan.best:
+            station = (data or {}).get("station")
+            if station in self.stations:
+                self.notes["done_station"] = station
+            elif self.plan and self.plan.best:
                 self.notes["done_station"] = self.plan.now_station or self.plan.best.station
             self._cancel(self._reminder)
         elif action == "spaeter":
@@ -380,6 +390,7 @@ class TankAssistent(hass.Hass):
         ("ersparnis_gesamt", "Ersparnis gesamt", "EUR", "monetary", "mdi:piggy-bank", "total"),
         ("ausschoepfung", "Ausschöpfung", "%", None, "mdi:percent", None),
         ("letzte_tankung", "Letzte Tankung", None, "timestamp", "mdi:history", None),
+        ("tankstand_geaendert", "Tankstand zuletzt geändert", None, "timestamp", "mdi:update", None),
         ("lernstand", "Lernstand (Preistage)", "d", None, "mdi:school", None),
     ]
 
@@ -435,6 +446,7 @@ class TankAssistent(hass.Hass):
             "ausschoepfung": round(summary["jahr"]["ausschoepfung"] * 100)
             if summary["jahr"]["ausschoepfung"] is not None else None,
             "letzte_tankung": self.refuels[-1]["time"] if self.refuels else None,
+            "tankstand_geaendert": self.last_fuel_time,
             "lernstand": model.days_of_data if model else 0,
         }
         best_now = None
@@ -574,17 +586,20 @@ class TankAssistent(hass.Hass):
                 and self.notes.get("last_status") != "jetzt":
             self.notes["last_spontaneous"] = now.isoformat()
             self._send_plan("jetzt")
-        self.notes["last_status"] = plan.status
-        self._save()
+        self.notes["last_status"] = plan.status   # gespeichert wird im 15-Minuten-Takt
 
     def _morning(self, kwargs) -> None:
+        if self.plan_time_free:
+            free = self.calendar.day_type(self._now().date()) >= 5   # Sa, So, Feiertag
+            if (kwargs.get("tag") == "frei") != free:
+                return
         self._compute_safe()
         plan = self.plan
         if not plan or not plan.best:
             return
         now = self._now()
         tomorrow = now.date() + timedelta(days=1)
-        long_drive = self.consumption.expected_km(tomorrow, self.calendar) >= 100
+        long_drive = self.consumption.expected_km(tomorrow, self.calendar) >= self.long_day_km
         soon = (plan.best.start.date() - now.date()).days <= 2
         changed = soon and self._signature() != self.notes.get("last_plan_sig")
         if plan.status in ("muss", "jetzt", "heute") or changed or long_drive:
@@ -595,6 +610,21 @@ class TankAssistent(hass.Hass):
             self._send_plan("plan")
         self.notes["last_status"] = plan.status
         self._after_plan()          # Vorlauf-Erinnerung planen (keine Doppelmeldung)
+
+    def _evening(self, kwargs) -> None:
+        """Optionaler Vorabend-Check: nur melden, wenn es für die lange Fahrt morgen knapp wird."""
+        self._compute_safe()
+        plan = self.plan
+        if not plan or not plan.best or self._done_recently():
+            return
+        now = self._now()
+        tomorrow = now.date() + timedelta(days=1)
+        if self.consumption.expected_km(tomorrow, self.calendar) < self.long_day_km:
+            return
+        pct, liters = self._fuel()
+        if plan.status == "muss" or not self._ctx(now, pct, liters)["tomorrow_ok"]:
+            self.notes["muss_sent"] = now.date().isoformat()
+            self._send_plan("muss")
 
     def _lead_reminder(self, kwargs) -> None:
         self.notes.pop("reminder_for", None)
@@ -676,7 +706,26 @@ class TankAssistent(hass.Hass):
         facts.update(extra or {})
         self.log(f"Meldung [{kind}] {title}: {text}")
         self.fire_event(EVENT_NOTIFY, kind=kind, title=title, message=text,
-                        actions=actions, facts=json.dumps(facts, ensure_ascii=False, default=str))
+                        actions=actions, buttons=self._buttons() if actions else [],
+                        facts=json.dumps(facts, ensure_ascii=False, default=str))
+
+    def _buttons(self, count: int = 3) -> list[dict]:
+        """„Getankt bei …“ für die empfohlene und die günstigsten offenen Tankstellen + „Später“."""
+        now = self._now()
+        ranked = []
+        for entity_id, meta in self.stations.items():
+            price = self._price(entity_id)
+            if price is None or self._open_now(entity_id) is False:
+                continue
+            ranked.append((price - self.discounts.euro(meta["brand"], now.date()), entity_id))
+        order = [e for _, e in sorted(ranked)]
+        first = self.plan.now_station if self.plan and self.plan.status == "jetzt" else (
+            self.plan.best.station if self.plan and self.plan.best else None)
+        if first in self.stations:
+            order = [first] + [e for e in order if e != first]
+        buttons = [{"action": f"TANK_GETANKT:{e}", "title": f"Getankt: {self.stations[e]['name']}"[:40]}
+                   for e in order[:count]]
+        return buttons + [{"action": "TANK_SPAETER", "title": "Später erinnern"}]
 
     # ============================================================== Tanken
     def _handle_refuel(self, liters: float, now: datetime, prev_time: str | None) -> None:

@@ -17,6 +17,14 @@ tank_assistent:
     von: 6
     bis: 22
   horizont_tage: 10
+
+  # Tage mit langer Fahrt (z. B. Bürotag, aus dem gelernten Fahrprofil):
+  # dann bin ich tagsüber unterwegs und kann nur in diesen Fenstern tanken.
+  fahrtag:
+    ab_km: 100
+    verfuegbar: [[6, 7], [18, 22]]
+
+  min_vorteil_jetzt: 0.5     # € Vorteil, ab dem „jetzt tanken“ statt Abwarten empfohlen wird
   sorte: e5                  # e5 | e10 | diesel
 
   # Tankerkönig-Tankstellen: "auto" findet alle Tankerkönig-Sensoren der Sorte.
@@ -42,6 +50,8 @@ tank_assistent:
 
   benachrichtigung:
     plan_uhrzeit: "07:00:00"        # Tagesplan inkl. Bürofahrt-Check
+    # plan_uhrzeit_wochenende: "08:30:00"   # optional: abweichend an Sa, So und Feiertagen
+    # vorabend_uhrzeit: "19:00:00"          # optional: Vorabend-Check vor langen Fahrten
     vorlauf_min: 60                 # Bestätigung vor dem empfohlenen Zeitpunkt
     ruhe_von: 21                    # keine spontanen Meldungen (außer „muss“)
     ruhe_bis: 7
