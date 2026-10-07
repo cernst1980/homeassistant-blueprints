@@ -54,7 +54,10 @@ def _weight(age_days: float, half_life: float = HALF_LIFE_DAYS) -> float:
 
 # ------------------------------------------------------------------- Historie
 class PriceHistory:
-    """{station: {hour_key: preis}} – Rohpreise ohne Rabatt, Minimum je Stunde."""
+    """{station: {hour_key: preis}} – Rohpreise ohne Rabatt, letzter Wert je Stunde.
+
+    Bewusst nicht das Minimum: Tankerkönig aktualisiert nur alle 30 Minuten, ein Wert
+    kurz nach 12 Uhr zeigt oft noch den alten Preis vor dem 12-Uhr-Sprung."""
 
     def __init__(self, data: dict | None = None) -> None:
         self.data: dict[str, dict[int, float]] = {
@@ -64,7 +67,7 @@ class PriceHistory:
     def add(self, station: str, dt: datetime, price: float) -> None:
         hours = self.data.setdefault(station, {})
         key = hour_key(dt)
-        hours[key] = min(price, hours.get(key, price))
+        hours[key] = price
 
     def prune(self, now: datetime, days: int = HISTORY_DAYS) -> None:
         limit = hour_key(now - timedelta(days=days))

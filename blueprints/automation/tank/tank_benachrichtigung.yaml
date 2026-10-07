@@ -4,8 +4,8 @@ blueprint:
     Verschickt die Meldungen der AppDaemon-App „Tank-Assistent“ (Event
     `tank_assistent_notify`) aufs Handy. Optional ergänzt eine KI-Aufgabe
     (z. B. Google Gemini) eine kurze Begründung – die Entscheidung selbst
-    trifft immer die App. Buttons „Erledigt“ und „Später“ werden an die App
-    zurückgemeldet.
+    trifft immer die App. Buttons „Getankt: <Tankstelle>“ und „Später“ werden an
+    die App zurückgemeldet.
   domain: automation
   source_url: https://github.com/cernst1980/homeassistant-blueprints/blob/main/blueprints/automation/tank/tank_benachrichtigung.yaml
   input:
@@ -57,14 +57,7 @@ triggers:
     id: meldung
   - trigger: event
     event_type: mobile_app_notification_action
-    event_data:
-      action: TANK_ERLEDIGT
-    id: erledigt
-  - trigger: event
-    event_type: mobile_app_notification_action
-    event_data:
-      action: TANK_SPAETER
-    id: spaeter
+    id: button
 
 variables:
   geraete: !input geraete
@@ -91,6 +84,10 @@ actions:
               text: "{{ trigger.event.data.message }}"
               fakten: "{{ trigger.event.data.facts | default('{}') }}"
               mit_buttons: "{{ trigger.event.data.actions | default(false) }}"
+              buttons: >-
+                {{ trigger.event.data.buttons | default([
+                   {'action': 'TANK_GETANKT:', 'title': 'Erledigt'},
+                   {'action': 'TANK_SPAETER', 'title': 'Später erinnern'}], true) }}
               begruendung: ""
           - if:
               - condition: template
@@ -134,22 +131,25 @@ actions:
                       push:
                         interruption-level: >-
                           {{ 'time-sensitive' if (zeitkritisch and art == 'muss') else 'active' }}
-                      actions: >-
-                        {{ [{'action': 'TANK_ERLEDIGT', 'title': 'Erledigt'},
-                            {'action': 'TANK_SPAETER', 'title': 'Später erinnern'}]
-                           if mit_buttons else [] }}
+                      actions: "{{ buttons if mit_buttons else [] }}"
 
       # ------------------------------------------------------------ Buttons
       - conditions:
           - condition: trigger
-            id: [erledigt, spaeter]
+            id: button
+          - condition: template
+            value_template: "{{ (trigger.event.data.action | default('')).startswith('TANK_') }}"
         sequence:
+          - variables:
+              knopf: "{{ trigger.event.data.action }}"
+              erledigt: "{{ knopf.startswith('TANK_GETANKT') or knopf == 'TANK_ERLEDIGT' }}"
           - event: tank_assistent_action
             event_data:
-              action: "{{ 'erledigt' if trigger.id == 'erledigt' else 'spaeter' }}"
+              action: "{{ 'erledigt' if erledigt else 'spaeter' }}"
+              station: "{{ knopf.split(':', 1)[1] if ':' in knopf else '' }}"
           - if:
-              - condition: trigger
-                id: erledigt
+              - condition: template
+                value_template: "{{ erledigt }}"
             then:
               - repeat:
                   for_each: "{{ ziele }}"
