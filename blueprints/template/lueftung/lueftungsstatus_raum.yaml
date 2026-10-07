@@ -83,6 +83,38 @@ blueprint:
               filter:
                 - domain: sensor
 
+    aktivitaet:
+      name: Aktivität, die Lüften erfordert (optional)
+      collapsed: true
+      input:
+        aktivitaet:
+          name: Entitäten
+          description: >-
+            z. B. Druckstatus von 3D-Druckern, Trockner, Dunstabzug. Aktiv, wenn eine davon einen
+            der unten genannten Zustände hat.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        aktiv_zustaende:
+          name: Als aktiv gelten die Zustände
+          default: [on, running, printing, prepare, pause]
+          selector:
+            select:
+              options: [on, running, printing, prepare, pause, heating, slicing]
+              multiple: true
+              custom_value: true
+        aktivitaet_name:
+          name: Bezeichnung in der Meldung
+          default: Aktivität
+          selector:
+            text:
+        aktivitaet_nachlauf:
+          name: Nachlüften nach Ende (Min.)
+          default: 15
+          selector:
+            number: { min: 0, max: 120, step: 5, unit_of_measurement: min, mode: box }
+
     schwellen:
       name: Schwellwerte
       collapsed: true
@@ -213,6 +245,14 @@ blueprint:
           default: 20
           selector:
             number: { min: 0, max: 120, step: 5, unit_of_measurement: min, mode: box }
+        messintervall:
+          name: Messintervall der Innensensoren (Min.)
+          description: >-
+            Wie oft die Sensoren messen (z. B. SwitchBot CO₂: 5). Das Vergleichsfenster für die
+            Abfallraten wird automatisch länger gewählt, damit immer zwei echte Messungen verglichen werden.
+          default: 1
+          selector:
+            number: { min: 1, max: 15, step: 1, unit_of_measurement: min, mode: box }
         max_alter:
           name: Sensorwert veraltet nach (Min.)
           description: >-
@@ -263,6 +303,7 @@ actions:
       kuehlen_ab: !input kuehlen_ab
       cooldown: !input cooldown
       max_alter: !input max_alter
+      messintervall: !input messintervall
       annahme_zu: !input annahme_zu
       sommer_block: !input sommer_block
       rf_trocken: !input rf_trocken
@@ -273,6 +314,10 @@ actions:
       hitze_vorkuehlen_ab: !input hitze_vorkuehlen_ab
       grundlueftung_h: !input grundlueftung_h
       grundlueftung_min: !input grundlueftung_min
+      e_aktiv: !input aktivitaet
+      aktiv_zustaende: !input aktiv_zustaende
+      aktivitaet_name: !input aktivitaet_name
+      aktivitaet_nachlauf: !input aktivitaet_nachlauf
 
   # Eigene Entity-ID: über `this`, sonst über das Attribut `raum`.
   # Vorherige Werte werden einzeln per state_attr() gelesen (nie als ganzes Dict).
@@ -311,6 +356,8 @@ actions:
 
   - variables:
       grenze: "{{ now_ts - (max_alter | int) * 60 }}"
+      # Vergleichsfenster für Raten: mind. 3 Min., sonst Messintervall + 2 Min.
+      ref_alter: "{{ ([3, (messintervall | int(1)) + 2] | max) * 60 }}"
 
   # Rohwerte (veraltete Werte werden zu none)
   - variables:
@@ -399,9 +446,9 @@ actions:
       verlauf: >-
         {%- set alt = ((state_attr(selbst, 'verlauf') if selbst else none) or []) -%}
         {%- set alt = alt if (alt is iterable and alt is not string and alt is not mapping) else [] -%}
-        {%- set neu = (alt | selectattr('t', 'gt', now_ts - 600) | list)
+        {%- set neu = (alt | selectattr('t', 'gt', now_ts - ([600, ref_alter + 300] | max)) | list)
               + [{'t': now_ts, 'co2': (co2 | int) if co2 is number else none, 'rh': rh_in, 'ah': ah_in, 'ti': t_in, 'tc': ts_co2, 'th': ts_rh_in}] -%}
-        {{- neu[-12:] -}}
+        {{- neu[-20:] -}}
 
   # Trends (Referenz: letzter Messpunkt, der mind. 3 Min. alt ist)
   - variables:
@@ -415,7 +462,7 @@ actions:
         {{- (alt * e ** (0 - dt / 259200) + w * dt / 3600) | round(3) -}}
       hitzetag: "{{ tmax is number and tmax >= hitze_schwelle }}"
       ref: >-
-        {%- set r = verlauf | selectattr('t', 'le', now_ts - 180) | list -%}
+        {%- set r = verlauf | selectattr('t', 'le', now_ts - ref_alter) | list -%}
         {{- r[-1] if r | length > 0 else none -}}
       rf_anstieg: >-
         {%- set werte = verlauf | map(attribute='rh') | select('number') | list -%}
@@ -494,11 +541,27 @@ actions:
         {%- elif t_out < 18 -%}15
         {%- else -%}0{%- endif -%}
 
+  # Aktivität (z. B. 3D-Druck) und Nachlauf
+  - variables:
+      aktiv_jetzt: >-
+        {%- set liste = e_aktiv if (e_aktiv is iterable and e_aktiv is not string) else ([e_aktiv] if e_aktiv else []) -%}
+        {%- set z = aktiv_zustaende if (aktiv_zustaende is iterable and aktiv_zustaende is not string) else [aktiv_zustaende] -%}
+        {{- liste | select('is_state', z) | list | count > 0 -}}
+      aktiv_zuletzt: >-
+        {%- set alt = (state_attr(selbst, 'aktiv_zuletzt') if selbst else none) -%}
+        {%- if aktiv_jetzt -%}{{- now_ts -}}{%- elif alt is number -%}{{- alt -}}{%- else -%}{{- none -}}{%- endif -%}
+      aktiv_nachlauf: >-
+        {{- (not aktiv_jetzt) and aktiv_zuletzt is number and (now_ts - aktiv_zuletzt) < (aktivitaet_nachlauf | int(0)) * 60 -}}
+
   # Letzte echte Lüftung (Fenster mind. grundlueftung_min offen). Erster Lauf: jetzt.
   - variables:
       zuletzt_gelueftet: >-
         {%- set alt = (state_attr(selbst, 'zuletzt_gelueftet') if selbst else none) -%}
+        {%- set alt_offen = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
+        {%- set schliesszeit = (as_timestamp((expand(e_win) | first).last_changed, now_ts) | int) if kontakt else now_ts -%}
         {%- if win_open and offen_min >= (grundlueftung_min | float(3)) -%}{{- now_ts -}}
+        {#- Gerade geschlossen: tatsächliche Öffnungsdauer prüfen (Lauf kann zwischen 3 Min. und Schließen fallen) -#}
+        {%- elif not win_open and alt_offen is number and (schliesszeit - alt_offen) >= (grundlueftung_min | float(3)) * 60 -%}{{- schliesszeit -}}
         {%- elif alt is number -%}{{- alt -}}
         {%- else -%}{{- now_ts -}}{%- endif -%}
 
@@ -563,6 +626,12 @@ actions:
                 and (t_in is not number or t_out is not number or t_out <= t_in + 1) -%}
             {%- set ns.gruende = ns.gruende + ['Grundlüftung, seit ' ~ (seit_h | round(0) | int) ~ ' h nicht gelüftet'] -%}
           {%- endif -%}
+          {#- Aktivität: Schadstoffe, die kein Sensor misst → auch bei feuchter Außenluft -#}
+          {%- if aktiv_jetzt -%}
+            {%- set ns.gruende = ns.gruende + [aktivitaet_name ~ ' läuft'] -%}
+          {%- elif aktiv_nachlauf -%}
+            {%- set ns.gruende = ns.gruende + ['Nachlüften nach ' ~ aktivitaet_name] -%}
+          {%- endif -%}
           {%- set rest = ((cooldown | int) * 60 - (now_ts - geschlossen_seit)) if geschlossen_seit is number else 0 -%}
           {%- if rest > 0 and not ns.dringend and ns.gruende | length > 0 -%}
             {%- set status = 'ok' -%}
@@ -602,7 +671,7 @@ actions:
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}
             {#- Plateau nur in der Heizsaison: ohne Heizverlust (max_min 0) kein Grund zum Schließen -#}
-            {%- if not kuehlen and max_min > 0 and offen_min >= 4 and co2_ok and ah_ok -%}
+            {%- if not kuehlen and not aktiv_jetzt and not aktiv_nachlauf and max_min > 0 and offen_min >= (ref_alter / 60 + 1) and co2_ok and ah_ok -%}
               {%- set ns.gruende = ns.gruende + ['Luft ist ausgetauscht'] -%}
             {%- endif -%}
           {%- endif -%}
@@ -656,5 +725,7 @@ sensor:
     t_min_offen: "{{ t_min_offen }}"
     geschlossen_seit: "{{ geschlossen_seit }}"
     zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
+    aktiv: "{{ aktiv_jetzt }}"
+    aktiv_zuletzt: "{{ aktiv_zuletzt }}"
     schliessen_seit: "{{ schliessen_seit }}"
     verlauf: "{{ verlauf }}"

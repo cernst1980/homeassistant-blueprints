@@ -20,6 +20,7 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - **Schimmelrisiko über Zeit:** gleitende Feuchtestunden (Wand-rF ≥ 80 % voll, 75–80 % halb, Abklingzeit ca. 3 Tage)
 - **CO₂** (optional): Richtwerte nach UBA; Sommer-Block bei feuchter Außenluft
 - **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung
+- **Aktivitäten** (optional): z. B. 3D-Druck, Trockner – Lüftempfehlung während und kurz nach der Aktivität
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,
   Temperaturabfall, „Raumluft zu trocken“, „Außenluft feuchter“, „außen wärmer“.
@@ -67,6 +68,8 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 
 - **Sensoren, die nur bei Wertänderung melden** (BLE wie ThermoPro/SwitchBot, viele Zigbee-Geräte):
   „keine neue Meldung“ bedeutet „unverändert“. Deshalb ist `max_alter` standardmäßig 180 Minuten.
+- **Sensoren mit festem Messintervall** (z. B. SwitchBot Meter Pro CO2: 5 Min.): `messintervall` setzen,
+  damit die Abfallraten immer zwei echte Messungen vergleichen.
 - Die Zonen-Sensoren schreiben jede Minute neue Attribute → per `recorder: exclude` ausschließen
   (siehe Beispiel-Package) und für die Historie den Übersichtssensor nutzen.
 - Raumnamen (`raum`) müssen eindeutig sein.
