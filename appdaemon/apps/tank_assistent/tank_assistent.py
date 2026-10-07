@@ -5,7 +5,7 @@ Tankzeitpunkt (optimales Stoppproblem) und stellt alles per MQTT Discovery als
 Home-Assistant-Entitäten bereit. Benachrichtigungen werden als Event
 `tank_assistent_notify` ausgelöst und vom Blueprint verschickt (inkl. Gemini-Text).
 
-Konfiguration: siehe apps.yaml.example und README.
+Konfiguration: siehe tank_assistent.yaml.example und docs/tank_assistent.md im Repo.
 """
 
 from __future__ import annotations
