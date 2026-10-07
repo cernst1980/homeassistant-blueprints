@@ -259,7 +259,8 @@ blueprint:
             Ohne neue Meldung in dieser Zeit wird der Wert ignoriert. Fehlen Pflichtwerte,
             wird der Raum „nicht verfügbar“. Viele Sensoren (BLE, Zigbee) melden nur bei
             Wertänderung – bei stabiler Raumluft kann das über eine Stunde dauern.
-            Echte Ausfälle meldet die Integration meist selbst als „nicht verfügbar“.
+            Maßgeblich ist die letzte Meldung irgendeiner Entität desselben Geräts (bzw. der
+            Gruppenmitglieder). Echte Ausfälle meldet die Integration meist selbst als „nicht verfügbar“.
           default: 180
           selector:
             number: { min: 10, max: 720, step: 10, unit_of_measurement: min, mode: box }
@@ -354,6 +355,34 @@ actions:
         {%- set st = expand(e_t_wand) | first if e_t_wand else none -%}
         {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
 
+  # Frische pro Sensor: letzte Meldung IRGENDEINER Entität desselben Geräts (bzw. der Gruppenmitglieder).
+  # BLE-Integrationen schreiben eine Entität nur bei Wertänderung – konstante Feuchte ist kein Ausfall,
+  # solange z. B. die Temperatur desselben Sensors weiter meldet.
+  - variables:
+      frisch: >-
+        {%- set ns = namespace(s='') -%}
+        {%- for key, ent in [('t_in', e_t_in), ('rh_in', e_rh_in), ('co2', e_co2), ('t_out', e_t_out),
+              ('rh_out', e_rh_out), ('t_wand', e_t_wand)] -%}
+          {%- set n2 = namespace(q=[], ts=0) -%}
+          {%- if ent -%}
+            {%- set basis = [ent] -%}
+            {%- for attr in ['entity_id', 'quellen'] -%}
+              {%- set m = state_attr(ent, attr) -%}
+              {%- if m is iterable and m is not string and m is not mapping -%}{%- set basis = basis + (m | list) -%}{%- endif -%}
+            {%- endfor -%}
+            {%- for c in basis -%}
+              {%- set d = device_id(c) -%}
+              {%- set n2.q = n2.q + [c] + ((device_entities(d) | select('match', '(sensor|binary_sensor)[.]') | list) if d else []) -%}
+            {%- endfor -%}
+            {%- for st in expand(n2.q | unique | list) -%}
+              {%- set t = as_timestamp(st.last_reported | default(st.last_updated), 0) -%}
+              {%- if st.state not in ['unavailable', 'unknown'] and t > n2.ts -%}{%- set n2.ts = t -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- set ns.s = ns.s ~ "'" ~ key ~ "': " ~ (n2.ts | int) ~ ", " -%}
+        {%- endfor -%}
+        {{- '{' ~ ns.s ~ '}' -}}
+
   - variables:
       grenze: "{{ now_ts - (max_alter | int) * 60 }}"
       # Vergleichsfenster für Raten: mind. 3 Min., sonst Messintervall + 2 Min.
@@ -364,28 +393,28 @@ actions:
       # zusätzlich Plausibilitätsgrenzen (Sensorfehler wie 0 % rF oder -40 °C)
       t_in: >-
         {%- set v = states(e_t_in) | float(none) -%}
-        {{- v if (ts_t_in >= grenze and v is number and -10 <= v <= 50) else none -}}
+        {{- v if (frisch.t_in >= grenze and v is number and -10 <= v <= 50) else none -}}
       rh_in: >-
         {%- set v = states(e_rh_in) | float(none) -%}
-        {{- v if (ts_rh_in >= grenze and v is number and 1 <= v <= 100) else none -}}
+        {{- v if (frisch.rh_in >= grenze and v is number and 1 <= v <= 100) else none -}}
       t_out: >-
         {%- set v = states(e_t_out) | float(none) -%}
-        {{- v if (ts_t_out >= grenze and v is number and -40 <= v <= 50) else none -}}
+        {{- v if (frisch.t_out >= grenze and v is number and -40 <= v <= 50) else none -}}
       rh_out: >-
         {%- set v = states(e_rh_out) | float(none) -%}
-        {{- v if (ts_rh_out >= grenze and v is number and 1 <= v <= 100) else none -}}
+        {{- v if (frisch.rh_out >= grenze and v is number and 1 <= v <= 100) else none -}}
       co2: >-
         {%- set v = (states(e_co2) | float(none)) if e_co2 else none -%}
-        {{- v if (e_co2 and ts_co2 >= grenze and v is number and 300 <= v <= 10000) else none -}}
+        {{- v if (e_co2 and frisch.co2 >= grenze and v is number and 300 <= v <= 10000) else none -}}
       t_wand_sensor: >-
         {%- set v = (states(e_t_wand) | float(none)) if e_t_wand else none -%}
-        {{- v if (e_t_wand and ts_t_wand >= grenze and v is number and -20 <= v <= 50) else none -}}
+        {{- v if (e_t_wand and frisch.t_wand >= grenze and v is number and -20 <= v <= 50) else none -}}
       tmax: "{{ (states(e_tmax) | float(none)) if e_tmax else none }}"
       veraltet: >-
         {%- set ns = namespace(l=[]) -%}
-        {%- for name, ent, ts in [('Temperatur innen', e_t_in, ts_t_in), ('Feuchte innen', e_rh_in, ts_rh_in),
-              ('CO₂', e_co2, ts_co2), ('Temperatur außen', e_t_out, ts_t_out),
-              ('Feuchte außen', e_rh_out, ts_rh_out), ('Wandtemperatur', e_t_wand, ts_t_wand)]
+        {%- for name, ent, ts in [('Temperatur innen', e_t_in, frisch.t_in), ('Feuchte innen', e_rh_in, frisch.rh_in),
+              ('CO₂', e_co2, frisch.co2), ('Temperatur außen', e_t_out, frisch.t_out),
+              ('Feuchte außen', e_rh_out, frisch.rh_out), ('Wandtemperatur', e_t_wand, frisch.t_wand)]
               if ent and ts < grenze -%}
           {%- set ns.l = ns.l + [name] -%}
         {%- endfor -%}
