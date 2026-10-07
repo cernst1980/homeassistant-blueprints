@@ -1,0 +1,53 @@
+# Tank-Assistent – AppDaemon-Konfiguration
+# Als tank_assistent.yaml in denselben Ordner kopieren und Entity-IDs anpassen.
+# Änderungen werden von AppDaemon automatisch neu geladen.
+
+tank_assistent:
+  module: tank_assistent
+  class: TankAssistent
+
+  fahrzeug:
+    tankstand: sensor.tiguan_tankstand                 # % (VW Group Connect)
+    kilometerstand: sensor.tiguan_kilometerstand       # km
+    verbrauch: sensor.tiguan_durchschnittsverbrauch_lebensdauer   # optional, l/100 km (Startwert)
+    tankgroesse: 58                                    # Liter
+
+  reserve_km: 100            # Mindestreserve nach der nächsten geplanten Fahrt
+  verfuegbar:                # in diesen Stunden kann ich tanken
+    von: 6
+    bis: 22
+  horizont_tage: 10
+  sorte: e5                  # e5 | e10 | diesel
+
+  # Tankerkönig-Tankstellen: "auto" findet alle Tankerkönig-Sensoren der Sorte.
+  # Alternativ explizit:
+  # tankstellen:
+  #   - preis: sensor.esso_alpenstr_13_super
+  #     status: binary_sensor.esso_alpenstr_13_status
+  tankstellen: auto
+
+  # Rabatte (ct/l), Marke wie im Attribut "brand" (Teiltreffer, Groß/klein egal)
+  rabatte:
+    - { marke: ESSO, cent: 2, bis: 2026-10-15 }   # ADAC-Startangebot
+    - { marke: ESSO, cent: 1, ab: 2026-10-16 }    # ADAC regulär
+    - { marke: AGIP, cent: 1 }                    # ADAC (Höhe an der Kasse prüfen)
+    - { marke: ENI, cent: 1 }
+
+  ferien_region: DE-BY       # Schulferien über openholidaysapi.org
+
+  # Startwerte für das Fahrprofil (km je Tag), bis genug Historie gelernt ist.
+  # Feiertage zählen wie Sonntag; Donnerstag gilt nur an Arbeitstagen.
+  km_start: { mo: 15, di: 15, mi: 15, do: 200, fr: 15, sa: 25, so: 10 }
+  verbrauch_start: 8.5       # l/100 km, bis genug gelernt ist
+
+  benachrichtigung:
+    plan_uhrzeit: "07:00:00"        # Tagesplan inkl. Bürofahrt-Check
+    vorlauf_min: 60                 # Bestätigung vor dem empfohlenen Zeitpunkt
+    ruhe_von: 21                    # keine spontanen Meldungen (außer „muss“)
+    ruhe_bis: 7
+    spontan_abstand_h: 3
+    spontan_min_vorteil: 1.0        # € Vorteil gegenüber Abwarten für eine Spontanmeldung
+    wochenbilanz_uhrzeit: "18:00:00"  # sonntags
+    tankung_melden: true
+
+  mqtt_prefix: tank_assistent

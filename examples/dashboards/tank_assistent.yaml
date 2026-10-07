@@ -1,0 +1,53 @@
+# Tank-Assistent – Dashboard-Karte
+# Dashboard bearbeiten → Karte hinzufügen → Manuell → Inhalt einfügen.
+type: vertical-stack
+cards:
+  - type: markdown
+    content: >-
+      ## ⛽ {{ state_attr('sensor.tank_assistent_status', 'titel') or 'Tank-Assistent' }}
+
+      {{ state_attr('sensor.tank_assistent_status', 'text') or 'Noch keine Planung.' }}
+
+      {% set g = state_attr('sensor.tank_assistent_status', 'guenstigste_uhrzeiten') %}
+      {% if g %}<small>Typisch am günstigsten: {{ g | sort | join(', ') }} Uhr ·
+      Lernstand: {{ states('sensor.tank_assistent_lernstand') }} Tage</small>{% endif %}
+  - type: entities
+    title: Plan
+    show_header_toggle: false
+    entities:
+      - entity: sensor.tank_assistent_status
+      - entity: sensor.tank_assistent_empfohlener_zeitpunkt
+        format: relative
+      - entity: sensor.tank_assistent_empfohlene_tankstelle
+      - entity: sensor.tank_assistent_zielpreis
+      - entity: sensor.tank_assistent_spaetestens
+        format: datetime
+      - entity: sensor.tank_assistent_bestpreis
+      - entity: sensor.tank_assistent_bestpreis_tankstelle
+  - type: glance
+    columns: 4
+    entities:
+      - entity: sensor.tank_assistent_tankinhalt
+        name: Tank
+      - entity: sensor.tank_assistent_reichweite
+        name: Reichweite
+      - entity: sensor.tank_assistent_preistrend
+        name: Trend
+      - entity: sensor.tank_assistent_km_morgen
+        name: km morgen
+  - type: entities
+    title: Ersparnis (gegenüber Durchschnittspreis)
+    show_header_toggle: false
+    entities:
+      - entity: sensor.tank_assistent_ersparnis_monat
+      - entity: sensor.tank_assistent_ersparnis_jahr
+      - entity: sensor.tank_assistent_ersparnis_gesamt
+      - entity: sensor.tank_assistent_ausschoepfung
+      - entity: sensor.tank_assistent_letzte_tankung
+        format: relative
+  - type: history-graph
+    title: Bestpreis und Tankinhalt
+    hours_to_show: 168
+    entities:
+      - entity: sensor.tank_assistent_bestpreis
+      - entity: sensor.tank_assistent_tankinhalt
