@@ -22,13 +22,16 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - **Dauerlüften** (optional, `dauerlueften: nachts` oder `immer`): z. B. Schlafzimmer nachts oder Büro tagsüber –
   das Fenster darf offen bleiben; Meldung „schließen oder nur kippen“ nur, wenn etwas dagegen spricht: Raum zu kalt
   (`nacht_min_temp`, Standard 16 °C), Außenluft deutlich feuchter oder wärmer, Raumluft zu trocken, optional nach
-  `dauer_max_min` Minuten. Mit `dauer_fenster` gilt das nur für bestimmte Fenster (z. B. Küchenfenster beim Kochen),
-  andere Öffnungen der Zone werden normal bewertet. Bei `nachts` zum Ende des Nachtfensters in der Heizsaison:
+  `dauer_max_min` Minuten (nur in der Heizsaison). Wird jede Minute neu bewertet – wer statt zu schließen
+  kippt, bekommt keine weiteren Erinnerungen, sobald sich der Raum erholt. Mit `dauer_ab_aussen` (z. B. 10 °C)
+  gilt Dauerlüften erst ab dieser Außentemperatur, darunter die normalen Stoßlüft-Regeln. Mit `dauer_fenster` gilt das nur für bestimmte Fenster (z. B. Küchenfenster beim Kochen),
+  sind weitere Öffnungen der Zone offen (Gruppe), gelten die normalen Regeln. Bei `nachts` zum Ende des Nachtfensters in der Heizsaison:
   „Nachtlüftung beendet“ (`nachtlueften: true` aus älteren Versionen entspricht `nachts`)
 - **Lüftungssperre** (optional, `sperre`): z. B. Beamer/AV-Receiver im Heimkino – während eines Films keine
   Lüftempfehlung („Lüften pausiert (Film)“), danach (ab `sperre_min` Minuten Laufzeit) „Nach Film lüften“
-- **Kühl-Temperatur** (optional, `temp_kuehlen`): eigener Sensor für Kühlen/„außen wärmer“, z. B. der wärmste
-  Raumteil (Wintergarten) in einer offenen Zone
+- **Kühl-Temperatur** (optional, `temp_kuehlen`): eigener Sensor, der Kühlen auslöst, z. B. der wärmste
+  Raumteil (Wintergarten) in einer offenen Zone – nur wenn auch die Zone selbst warm ist (in der Heizsaison ist
+  Sonnenwärme willkommen)
 - **Aktivitäten** (optional): z. B. 3D-Druck, Trockner – Lüftempfehlung während und kurz nach der Aktivität
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,
