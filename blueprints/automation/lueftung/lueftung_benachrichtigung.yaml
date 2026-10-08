@@ -380,6 +380,12 @@ actions:
                         titel: "🪟 {{ state_attr(ent, 'raum') or state_attr(ent, 'friendly_name') }}: Fenster schließen"
                         text: >-
                           {{ state_attr(ent, 'grund') }}
+                          {#- Wetter bei jeder Erinnerung neu lesen -#}
+                          {%- set wz = states(wetter) if wetter else '' -%}
+                          {%- set uw = wetter != '' and (wz in ['lightning', 'lightning-rainy', 'hail', 'exceptional']
+                                or (state_attr(wetter, 'wind_speed') | float(0)) >= wind_max) -%}
+                          {%- set rg = wz in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy'] -%}
+                          {%- if uw or (rg and not state_attr(ent, 'regengeschuetzt')) %}{{ '\n' }}{{ '⛈ Unwetter' if uw else '🌧 Es regnet' }}{% endif %}
                           {%- if state_attr(ent, 'vermutet_offen') %}{{ '\n' }}(Fenster vermutlich offen – kein Kontakt im Raum){% endif %}
                         # Anwesenheit bei jeder Erinnerung neu bestimmen
                         empf: >-

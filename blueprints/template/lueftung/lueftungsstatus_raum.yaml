@@ -889,9 +889,7 @@ actions:
             {%- set status = 'ok' if ns.gruende | length == 0 else ('dringend' if ns.dringend else 'lueften') -%}
           {%- endif -%}
         {%- else -%}
-          {%- if prev == 'schliessen' and not dauer -%}
-            {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or '')] -%}
-          {%- elif dauer -%}
+          {%- if dauer -%}
             {#- Dauerlüften: offen bleiben erlaubt, nur echte Gründe zum Schließen/Kippen.
                 Wird jede Minute neu bewertet (Kontakt erkennt „gekippt“ nicht) – mit Hysterese. -#}
             {%- set h = prev == 'schliessen' -%}
@@ -946,6 +944,10 @@ actions:
             {%- if not kuehlen and not aktiv_jetzt and not aktiv_nachlauf and max_min > 0 and offen_min >= (ref_alter / 60 + 1) and co2_ok and ah_ok -%}
               {%- set ns.gruende = ns.gruende + ['Luft ist ausgetauscht'] -%}
             {%- endif -%}
+          {%- endif -%}
+          {#- „Schließen“ bleibt bis zum Schließen stehen; der Grund zeigt die aktuelle Lage -#}
+          {%- if prev == 'schliessen' and not dauer and ns.gruende | length == 0 -%}
+            {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or 'Fenster schließen')] -%}
           {%- endif -%}
           {%- set status = 'schliessen' if ns.gruende | length > 0 else 'offen' -%}
         {%- endif -%}
