@@ -138,6 +138,7 @@ template:
         temp_aussen: sensor.lueftung_aussen_temperatur
         feuchte_aussen: sensor.lueftung_aussen_luftfeuchtigkeit
         tmax_heute: sensor.wetter_hoechstwert_heute
+        # grundlueftung_ab: "09:00:00"                    # nicht vor der Duschzeit auskühlen
     name: Lüftung Bad
     unique_id: lueftung_bad
 
@@ -154,6 +155,10 @@ template:
         tmax_heute: sensor.wetter_hoechstwert_heute
         # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional: kälteste Außenwandecke
         # f_rsi: 0.65                                       # Altbau; Neubau eher 0.8
+        nachtlueften: true                                  # nachts offen/gekippt erlaubt
+        nacht_beginn: "21:00:00"
+        nacht_ende: "07:00:00"
+        # regengeschuetzt: true                             # z. B. Vordach: keine Regenwarnung
     name: Lüftung Schlafzimmer
     unique_id: lueftung_schlafzimmer
 

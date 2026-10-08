@@ -17,7 +17,11 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   (gemessen oder über den Temperaturfaktor fRsi nach DIN 4108-2 geschätzt)
 - **Schimmelrisiko über Zeit:** gleitende Feuchtestunden (Wand-rF ≥ 80 % voll, 75–80 % halb, Abklingzeit ca. 3 Tage)
 - **CO₂** (optional): Richtwerte nach UBA; Sommer-Block bei feuchter Außenluft
-- **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung
+- **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung –
+  nicht bei feuchterer oder wärmerer Außenluft, optional erst ab einer Uhrzeit (z. B. Bad nach der Duschzeit)
+- **Nachtlüftung** (optional, z. B. Schlafzimmer): im Nachtfenster darf das Fenster offen bleiben; schließen nur,
+  wenn der Raum zu kalt (Standard < 16 °C), die Außenluft deutlich feuchter oder wärmer bzw. die Raumluft zu
+  trocken wird. Zum Ende des Nachtfensters in der Heizsaison: „Nachtlüftung beendet“
 - **Aktivitäten** (optional): z. B. 3D-Druck, Trockner – Lüftempfehlung während und kurz nach der Aktivität
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,
@@ -33,6 +37,8 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - Offene Empfehlungen werden nach der Ruhezeit und nach dem Heimkommen nachgeholt
 - Erinnerung bei Nichtbeachtung („lüften“ alle 30 Min., „dringend“ alle 15 Min.)
 - Warnung bei offenen Fenstern beim Verlassen des Hauses und bei Regen/Unwetter
+  (Zonen mit `regengeschuetzt: true`, z. B. unter Vordach, nur bei Unwetter)
+- Reine Grundlüftung wird bei Regen/Unwetter zurückgestellt und nach dem Regen nachgeholt
 - Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt
 
 ## Installation
@@ -65,7 +71,9 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 ## Hinweise
 
 - **Sensoren, die nur bei Wertänderung melden** (BLE wie ThermoPro/SwitchBot, viele Zigbee-Geräte):
-  „keine neue Meldung“ bedeutet „unverändert“. Deshalb ist `max_alter` standardmäßig 180 Minuten.
+  „keine neue Meldung“ bedeutet „unverändert“. Ein Wert gilt als frisch, solange irgendeine Entität desselben
+  Geräts (bzw. der Gruppenmitglieder) meldet – konstante Feuchte bei weiter meldender Temperatur ist kein Ausfall.
+  Erst wenn das ganze Gerät `max_alter` (Standard 180 Min.) still ist, gilt der Wert als veraltet.
 - **Sensoren mit festem Messintervall** (z. B. SwitchBot Meter Pro CO2: 5 Min.): `messintervall` setzen,
   damit die Abfallraten immer zwei echte Messungen vergleichen.
 - Die Zonen-Sensoren schreiben jede Minute neue Attribute → per `recorder: exclude` ausschließen

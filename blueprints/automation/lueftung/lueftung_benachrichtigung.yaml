@@ -262,9 +262,12 @@ variables:
   bedarf: >-
     {%- set ns = namespace(l=[], dringend=false) -%}
     {%- for s in sensoren -%}
-      {%- if states(s) in ['lueften', 'dringend'] -%}
+      {%- set g = state_attr(s, 'grund') or '' -%}
+      {%- set nur_grundlueftung = g.startswith('Grundlüftung') and ' · ' not in g -%}
+      {%- if states(s) in ['lueften', 'dringend']
+            and not ((regen or unwetter) and nur_grundlueftung and not state_attr(s, 'regengeschuetzt')) -%}
         {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
-        {%- set ns.l = ns.l + [name ~ ': ' ~ state_attr(s, 'grund')] -%}
+        {%- set ns.l = ns.l + [name ~ ': ' ~ g] -%}
         {%- if is_state(s, 'dringend') -%}{%- set ns.dringend = true -%}{%- endif -%}
       {%- endif -%}
     {%- endfor -%}
@@ -273,14 +276,20 @@ variables:
     {%- set iv = erinnerung_lueften | int(0) -%}
     {%- set ns = namespace(f=false) -%}
     {%- if iv > 0 -%}
-      {%- for s in sensoren if states(s) in ['lueften', 'dringend'] -%}
-        {%- set st = expand(s) | first -%}
+      {%- for st in expand(sensoren) if st.state in ['lueften', 'dringend'] -%}
         {%- set i = (iv / 2) if st.state == 'dringend' else iv -%}
         {%- set m = (as_timestamp(now()) - as_timestamp(st.last_changed, 0)) / 60 -%}
         {%- if m >= i and (m % i) < 5 -%}{%- set ns.f = true -%}{%- endif -%}
       {%- endfor -%}
     {%- endif -%}
     {{- ns.f -}}
+  offen_wetter: >-
+    {%- set ns = namespace(l=[]) -%}
+    {%- for s in sensoren if states(s) in ['offen', 'schliessen'] and (unwetter or not state_attr(s, 'regengeschuetzt')) -%}
+      {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
+      {%- set ns.l = ns.l + [name ~ (' (vermutlich offen, kein Kontakt)' if state_attr(s, 'vermutet_offen') else '')] -%}
+    {%- endfor -%}
+    {{- ns.l -}}
   offen_alle: >-
     {%- set ns = namespace(l=[]) -%}
     {%- for s in sensoren if states(s) in ['offen', 'schliessen'] -%}
@@ -312,8 +321,13 @@ actions:
       # ---------- Jetzt lüften (gebündelt, nur an Anwesende) ----------
       - conditions:
           - condition: trigger
-            id: [bedarf, erinnerung]
-          - "{{ trigger.id == 'bedarf' or erinnerung_faellig }}"
+            id: [bedarf, erinnerung, wetter]
+          - >-
+            {{ trigger.id == 'bedarf'
+               or (trigger.id == 'erinnerung' and erinnerung_faellig)
+               or (trigger.id == 'wetter' and not regen and not unwetter and trigger.from_state is not none
+                   and trigger.from_state.state in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy',
+                                                    'lightning', 'hail', 'exceptional']) }}
           - "{{ bedarf.liste | length > 0 }}"
           - "{{ not ruhezeit }}"
           - "{{ ziele_bedarf | length > 0 }}"
@@ -433,11 +447,11 @@ actions:
             id: wetter
           - "{{ wetter != '' and (regen or unwetter) }}"
           - "{{ trigger.from_state is not none and trigger.from_state.state != trigger.to_state.state }}"
-          - "{{ offen_alle | length > 0 }}"
+          - "{{ offen_wetter | length > 0 }}"
         sequence:
           - variables:
               titel: "{{ '⛈ Unwetter – Fenster schließen' if unwetter else '🌧 Regen – Fenster offen' }}"
-              text: "{{ offen_alle | join('\n') }}"
+              text: "{{ offen_wetter | join('\n') }}"
           - repeat:
               for_each: "{{ ziele_dringlich }}"
               sequence:

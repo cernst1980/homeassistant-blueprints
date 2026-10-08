@@ -239,6 +239,46 @@ blueprint:
           default: 3
           selector:
             number: { min: 1, max: 30, step: 1, unit_of_measurement: min, mode: box }
+        grundlueftung_ab:
+          name: Grundlüftung erst ab (Uhrzeit)
+          description: >-
+            Vorher keine Grundlüftungs-Empfehlung, z. B. im Bad erst nach der üblichen Duschzeit
+            (sonst ist das Bad zum Duschen ausgekühlt). 00:00 = keine Einschränkung.
+          default: "00:00:00"
+          selector:
+            time:
+        nachtlueften:
+          name: Nachts dauerhaft lüften erlaubt
+          description: >-
+            Für Schlafräume mit nachts offenem/gekipptem Fenster: Im Nachtfenster keine Maximaldauer,
+            kein Plateau, kein Abkühl-Limit. Schließen nur, wenn der Raum zu kalt, die Außenluft
+            deutlich feuchter oder wärmer bzw. die Raumluft zu trocken wird. Zum Ende des
+            Nachtfensters (Heizsaison): „Nachtlüftung beendet – schließen“.
+          default: false
+          selector:
+            boolean:
+        nacht_beginn:
+          name: Nachtfenster von
+          default: "21:00:00"
+          selector:
+            time:
+        nacht_ende:
+          name: Nachtfenster bis
+          default: "07:00:00"
+          selector:
+            time:
+        nacht_min_temp:
+          name: Nachts schließen unter (°C)
+          description: Kühlt der Raum stärker aus, steigt das Schimmelrisiko an Wänden und Laibungen.
+          default: 16
+          selector:
+            number: { min: 10, max: 20, step: 0.5, unit_of_measurement: "°C", mode: box }
+        regengeschuetzt:
+          name: Fenster ist regengeschützt
+          description: z. B. Vordach oder Balkon darüber – keine Regenwarnung für diese Zone (Unwetter weiterhin).
+          default: false
+          selector:
+            boolean:
         cooldown:
           name: Pause nach dem Lüften (Min.)
           description: So lange nach dem Schließen nur „dringend“ melden.
@@ -315,6 +355,12 @@ actions:
       hitze_vorkuehlen_ab: !input hitze_vorkuehlen_ab
       grundlueftung_h: !input grundlueftung_h
       grundlueftung_min: !input grundlueftung_min
+      grundlueftung_ab: !input grundlueftung_ab
+      nachtlueften: !input nachtlueften
+      nacht_beginn: !input nacht_beginn
+      nacht_ende: !input nacht_ende
+      nacht_min_temp: !input nacht_min_temp
+      regengeschuetzt: !input regengeschuetzt
       e_aktiv: !input aktivitaet
       aktiv_zustaende: !input aktiv_zustaende
       aktivitaet_name: !input aktivitaet_name
@@ -607,6 +653,23 @@ actions:
           {{- neu | length >= 2 -}}
         {%- else -%}{{- false -}}{%- endif -%}
 
+  # Nachtlüftung
+  - variables:
+      nacht: >-
+        {%- set n = now().strftime('%H:%M:%S') -%}
+        {%- set b = nacht_beginn | string -%}
+        {%- set e = nacht_ende | string -%}
+        {%- if not nachtlueften -%}{{- false -}}
+        {%- elif b > e -%}{{- n >= b or n < e -}}
+        {%- elif b < e -%}{{- n >= b and n < e -}}
+        {%- else -%}{{- false -}}{%- endif -%}
+      nacht_vorher: "{{ (state_attr(selbst, 'nacht') if selbst else false) is true }}"
+      nacht_ende_ts: >-
+        {%- set e = as_timestamp(today_at(nacht_ende | string)) | int -%}
+        {{- e if e <= now_ts else e - 86400 -}}
+      nachtlueftung_beendet: >-
+        {{- nachtlueften and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts -}}
+
   # Entscheidung
   - variables:
       ergebnis: >-
@@ -651,6 +714,8 @@ actions:
           {%- endif -%}
           {%- set seit_h = ((now_ts - zuletzt_gelueftet) / 3600) if zuletzt_gelueftet is number else 0 -%}
           {%- if (grundlueftung_h | float(0)) > 0 and co2 is not number and not blockiert
+                and now().strftime('%H:%M:%S') >= (grundlueftung_ab | string)
+                and not (ah_diff is number and ah_diff < 0 - ah_min_diff)
                 and seit_h >= (grundlueftung_h | float(0))
                 and (t_in is not number or t_out is not number or t_out <= t_in + 1) -%}
             {%- set ns.gruende = ns.gruende + ['Grundlüftung, seit ' ~ (seit_h | round(0) | int) ~ ' h nicht gelüftet'] -%}
@@ -669,8 +734,24 @@ actions:
             {%- set status = 'ok' if ns.gruende | length == 0 else ('dringend' if ns.dringend else 'lueften') -%}
           {%- endif -%}
         {%- else -%}
-          {%- if prev == 'schliessen' -%}
+          {%- if prev == 'schliessen' and not (nacht and not nacht_vorher) -%}
             {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or '')] -%}
+          {%- elif nacht -%}
+            {#- Nachtlüftung: offen bleiben erlaubt, nur echte Gründe zum Schließen -#}
+            {%- if t_in is number and t_in < (nacht_min_temp | float(16)) -%}
+              {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C)'] -%}
+            {%- endif -%}
+            {%- if blockiert and offen_min >= 2 -%}
+              {%- set ns.gruende = ns.gruende + ['Außenluft deutlich feuchter'] -%}
+            {%- endif -%}
+            {%- if offen_min >= 2 and rh_in is number and rh_in < rf_trocken -%}
+              {%- set ns.gruende = ns.gruende + ['Raumluft wird zu trocken (' ~ rh_in ~ ' % rF)'] -%}
+            {%- endif -%}
+            {%- if kuehlen_aktiv and offen_min >= 2 and t_in is number and t_out is number and t_out >= t_in + 1 -%}
+              {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
+            {%- endif -%}
+          {%- elif nachtlueftung_beendet and max_min > 0 -%}
+            {%- set ns.gruende = ['Nachtlüftung beendet'] -%}
           {%- else -%}
             {%- set co2_hoch = co2 is number and co2 >= co2_lueften -%}
             {%- set co2_ok = co2 is not number or co2 <= co2_ziel
@@ -756,5 +837,7 @@ sensor:
     zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
     aktiv: "{{ aktiv_jetzt }}"
     aktiv_zuletzt: "{{ aktiv_zuletzt }}"
+    nacht: "{{ nacht }}"
+    regengeschuetzt: "{{ regengeschuetzt }}"
     schliessen_seit: "{{ schliessen_seit }}"
     verlauf: "{{ verlauf }}"
