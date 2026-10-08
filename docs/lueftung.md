@@ -19,9 +19,16 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - **CO₂** (optional): Richtwerte nach UBA; Sommer-Block bei feuchter Außenluft
 - **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung –
   nicht bei feuchterer oder wärmerer Außenluft, optional erst ab einer Uhrzeit (z. B. Bad nach der Duschzeit)
-- **Nachtlüftung** (optional, z. B. Schlafzimmer): im Nachtfenster darf das Fenster offen bleiben; schließen nur,
-  wenn der Raum zu kalt (Standard < 16 °C), die Außenluft deutlich feuchter oder wärmer bzw. die Raumluft zu
-  trocken wird. Zum Ende des Nachtfensters in der Heizsaison: „Nachtlüftung beendet“
+- **Dauerlüften** (optional, `dauerlueften: nachts` oder `immer`): z. B. Schlafzimmer nachts oder Büro tagsüber –
+  das Fenster darf offen bleiben; Meldung „schließen oder nur kippen“ nur, wenn etwas dagegen spricht: Raum zu kalt
+  (`nacht_min_temp`, Standard 16 °C), Außenluft deutlich feuchter oder wärmer, Raumluft zu trocken, optional nach
+  `dauer_max_min` Minuten. Mit `dauer_fenster` gilt das nur für bestimmte Fenster (z. B. Küchenfenster beim Kochen),
+  andere Öffnungen der Zone werden normal bewertet. Bei `nachts` zum Ende des Nachtfensters in der Heizsaison:
+  „Nachtlüftung beendet“ (`nachtlueften: true` aus älteren Versionen entspricht `nachts`)
+- **Lüftungssperre** (optional, `sperre`): z. B. Beamer/AV-Receiver im Heimkino – während eines Films keine
+  Lüftempfehlung („Lüften pausiert (Film)“), danach (ab `sperre_min` Minuten Laufzeit) „Nach Film lüften“
+- **Kühl-Temperatur** (optional, `temp_kuehlen`): eigener Sensor für Kühlen/„außen wärmer“, z. B. der wärmste
+  Raumteil (Wintergarten) in einer offenen Zone
 - **Aktivitäten** (optional): z. B. 3D-Druck, Trockner – Lüftempfehlung während und kurz nach der Aktivität
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,

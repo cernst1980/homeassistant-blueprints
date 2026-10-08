@@ -155,7 +155,8 @@ template:
         tmax_heute: sensor.wetter_hoechstwert_heute
         # wand_temp: sensor.schlafzimmer_ecke_temperatur   # optional: kälteste Außenwandecke
         # f_rsi: 0.65                                       # Altbau; Neubau eher 0.8
-        nachtlueften: true                                  # nachts offen/gekippt erlaubt
+        dauerlueften: "nachts"                              # nachts offen/gekippt erlaubt
+        # kuehlen_ab: 22                                    # Sommer: Abkühlen ab 22 °C empfehlen
         nacht_beginn: "21:00:00"
         nacht_ende: "07:00:00"
         # regengeschuetzt: true                             # z. B. Vordach: keine Regenwarnung
@@ -172,8 +173,22 @@ template:
         temp_aussen: sensor.lueftung_aussen_temperatur
         feuchte_aussen: sensor.lueftung_aussen_luftfeuchtigkeit
         tmax_heute: sensor.wetter_hoechstwert_heute
+        # dauerlueften: "immer"                             # Fenster darf offen bleiben …
+        # dauer_fenster: [binary_sensor.fenster_kueche]     # … aber nur das Küchenfenster (Kochen)
+        # dauer_max_min: 60
+        # temp_kuehlen: sensor.wintergarten_temperatur      # wärmster Raumteil bestimmt "Kühlen"
     name: Lüftung Erdgeschoss
     unique_id: lueftung_erdgeschoss
+
+  # Heimkino: während eines Films nicht lüften (Lautstärke), danach nachholen
+  # - use_blueprint:
+  #     path: lueftung/lueftungsstatus_raum.yaml
+  #     input:
+  #       raum: Heimkino
+  #       ...
+  #       sperre: [media_player.beamer]
+  #       sperre_zustaende: ["on", "playing", "paused"]
+  #       sperre_name: Film
 
   # Keller: erdberührte Wände ≈ Raumtemperatur, kein Kühlen, strenger Sommer-Block
   # - use_blueprint:

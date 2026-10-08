@@ -115,6 +115,48 @@ blueprint:
           selector:
             number: { min: 0, max: 120, step: 5, unit_of_measurement: min, mode: box }
 
+    sperre_gruppe:
+      name: Lüften unterdrücken (optional)
+      collapsed: true
+      input:
+        sperre:
+          name: Während diese Entitäten aktiv sind, nicht zum Lüften auffordern
+          description: z. B. Beamer/AV-Receiver im Heimkino (Lautstärke, Nachbarn).
+          default: []
+          selector:
+            entity:
+              multiple: true
+        sperre_zustaende:
+          name: Als aktiv gelten die Zustände
+          default: ["on", "playing", "paused"]
+          selector:
+            select:
+              options: ["on", "playing", "paused", "idle", "buffering"]
+              multiple: true
+              custom_value: true
+        sperre_name:
+          name: Bezeichnung in der Meldung
+          default: Film
+          selector:
+            text:
+        sperre_min:
+          name: Danach lüften, wenn länger aktiv als (Min.)
+          description: 0 = danach nicht gesondert zum Lüften auffordern.
+          default: 30
+          selector:
+            number: { min: 0, max: 240, step: 5, unit_of_measurement: min, mode: box }
+        temp_kuehlen:
+          name: Temperatur für Kühlen/Hitze (optional)
+          description: >-
+            z. B. ein sonniger Wintergarten, der nicht in den Mittelwert der Zone einfließen soll,
+            aber im Sommer zum Kühlen auffordern darf. Leer = Raumtemperatur.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+
     schwellen:
       name: Schwellwerte
       collapsed: true
@@ -247,13 +289,20 @@ blueprint:
           default: "00:00:00"
           selector:
             time:
-        nachtlueften:
-          name: Nachts dauerhaft lüften erlaubt
+        dauerlueften:
+          name: Dauerlüften erlaubt
           description: >-
-            Für Schlafräume mit nachts offenem/gekipptem Fenster: Im Nachtfenster keine Maximaldauer,
-            kein Plateau, kein Abkühl-Limit. Schließen nur, wenn der Raum zu kalt, die Außenluft
-            deutlich feuchter oder wärmer bzw. die Raumluft zu trocken wird. Zum Ende des
-            Nachtfensters (Heizsaison): „Nachtlüftung beendet – schließen“.
+            Für kleine, lange genutzte Räume (Schlafzimmer, Büro): Fenster darf offen bleiben – keine
+            Maximaldauer, kein Plateau, kein Abkühl-Limit. Schließen (oder kippen) nur, wenn der Raum zu kalt,
+            die Außenluft deutlich feuchter oder wärmer bzw. die Raumluft zu trocken wird.
+            „nachts“ = nur im Nachtfenster, danach in der Heizsaison „Nachtlüftung beendet“.
+          default: aus
+          selector:
+            select:
+              options: ["aus", "nachts", "immer"]
+        nachtlueften:
+          name: Nachts dauerhaft lüften erlaubt (veraltet)
+          description: Entspricht „Dauerlüften = nachts“. Bitte stattdessen „Dauerlüften erlaubt“ verwenden.
           default: false
           selector:
             boolean:
@@ -268,11 +317,29 @@ blueprint:
           selector:
             time:
         nacht_min_temp:
-          name: Nachts schließen unter (°C)
-          description: Kühlt der Raum stärker aus, steigt das Schimmelrisiko an Wänden und Laibungen.
+          name: Dauerlüften – schließen/kippen unter (°C)
+          description: >-
+            Kühlt der Raum stärker aus, steigt das Schimmelrisiko an Wänden und Laibungen.
+            Schlafraum etwa 16 °C, Arbeitsraum 19 °C, Wohnraum 19–20 °C.
           default: 16
           selector:
             number: { min: 10, max: 20, step: 0.5, unit_of_measurement: "°C", mode: box }
+        dauer_fenster:
+          name: Dauerlüften nur bei diesen Fenstern (optional)
+          description: >-
+            z. B. nur das Küchenfenster beim Kochen. Leer = gilt für das Zonenfenster allgemein.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+        dauer_max_min:
+          name: Dauerlüften höchstens (Min.)
+          description: 0 = unbegrenzt. z. B. 60 für „Küchenfenster beim Kochen“.
+          default: 0
+          selector:
+            number: { min: 0, max: 600, step: 5, unit_of_measurement: min, mode: box }
         regengeschuetzt:
           name: Fenster ist regengeschützt
           description: z. B. Vordach oder Balkon darüber – keine Regenwarnung für diese Zone (Unwetter weiterhin).
@@ -357,6 +424,14 @@ actions:
       grundlueftung_min: !input grundlueftung_min
       grundlueftung_ab: !input grundlueftung_ab
       nachtlueften: !input nachtlueften
+      dauerlueften: !input dauerlueften
+      dauer_fenster: !input dauer_fenster
+      dauer_max_min: !input dauer_max_min
+      e_sperre: !input sperre
+      sperre_zustaende: !input sperre_zustaende
+      sperre_name: !input sperre_name
+      sperre_min: !input sperre_min
+      e_t_kuehl: !input temp_kuehlen
       nacht_beginn: !input nacht_beginn
       nacht_ende: !input nacht_ende
       nacht_min_temp: !input nacht_min_temp
@@ -655,20 +730,47 @@ actions:
 
   # Nachtlüftung
   - variables:
+      modus: "{{ dauerlueften if dauerlueften in ['nachts', 'immer'] else ('nachts' if nachtlueften else 'aus') }}"
       nacht: >-
         {%- set n = now().strftime('%H:%M:%S') -%}
         {%- set b = nacht_beginn | string -%}
         {%- set e = nacht_ende | string -%}
-        {%- if not nachtlueften -%}{{- false -}}
+        {%- if modus != 'nachts' -%}{{- false -}}
         {%- elif b > e -%}{{- n >= b or n < e -}}
         {%- elif b < e -%}{{- n >= b and n < e -}}
         {%- else -%}{{- false -}}{%- endif -%}
-      nacht_vorher: "{{ (state_attr(selbst, 'nacht') if selbst else false) is true }}"
+      dauer_vorher: "{{ (state_attr(selbst, 'dauer') if selbst else false) is true }}"
       nacht_ende_ts: >-
         {%- set e = as_timestamp(today_at(nacht_ende | string)) | int -%}
         {{- e if e <= now_ts else e - 86400 -}}
       nachtlueftung_beendet: >-
-        {{- nachtlueften and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts -}}
+        {{- modus == 'nachts' and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts -}}
+      dauer: >-
+        {%- set df = dauer_fenster if (dauer_fenster is iterable and dauer_fenster is not string) else ([dauer_fenster] if dauer_fenster else []) -%}
+        {{- (modus == 'immer' or nacht) and (df | count == 0 or (df | select('is_state', 'on') | list | count > 0)) -}}
+      t_kuehl: >-
+        {%- set v = (states(e_t_kuehl) | float(none)) if e_t_kuehl else none -%}
+        {{- v if (v is number and -10 <= v <= 60) else t_in -}}
+      sperre_aktiv: >-
+        {%- set l = e_sperre if (e_sperre is iterable and e_sperre is not string) else ([e_sperre] if e_sperre else []) -%}
+        {%- set z = sperre_zustaende if (sperre_zustaende is iterable and sperre_zustaende is not string) else [sperre_zustaende] -%}
+        {{- l | select('is_state', z) | list | count > 0 -}}
+      sperre_beginn: >-
+        {%- set alt = (state_attr(selbst, 'sperre_beginn') if selbst else none) -%}
+        {%- set war = (state_attr(selbst, 'sperre_aktiv') if selbst else false) is true -%}
+        {%- if sperre_aktiv and not war -%}{{- now_ts -}}
+        {%- elif alt is number -%}{{- alt -}}{%- else -%}{{- none -}}{%- endif -%}
+      sperre_ende: >-
+        {%- set alt = (state_attr(selbst, 'sperre_ende') if selbst else none) -%}
+        {%- set war = (state_attr(selbst, 'sperre_aktiv') if selbst else false) is true -%}
+        {%- if sperre_aktiv -%}{{- none -}}
+        {%- elif war -%}{{- now_ts -}}
+        {%- elif alt is number -%}{{- alt -}}{%- else -%}{{- none -}}{%- endif -%}
+      nach_sperre: >-
+        {{- (sperre_min | int(0)) > 0 and not sperre_aktiv and sperre_ende is number and sperre_beginn is number
+            and (sperre_ende - sperre_beginn) >= (sperre_min | int(0)) * 60
+            and now_ts - sperre_ende < 43200
+            and (zuletzt_gelueftet is not number or zuletzt_gelueftet < sperre_ende) -}}
 
   # Entscheidung
   - variables:
@@ -679,8 +781,8 @@ actions:
         {%- set trocken = ah_diff is number and ah_diff >= (ah_min_diff - (0.3 if hyst else 0)) -%}
         {%- set blockiert = (sommer_block | float(0)) > 0 and ah_diff is number and ah_diff <= 0 - (sommer_block | float(0)) -%}
         {%- set kuehl_ab = hitze_vorkuehlen_ab if hitzetag else kuehlen_ab -%}
-        {%- set kuehlen = kuehlen_aktiv and t_in is number and t_out is number
-              and t_in >= kuehl_ab and t_out <= t_in - 2
+        {%- set kuehlen = kuehlen_aktiv and t_kuehl is number and t_out is number
+              and t_kuehl >= kuehl_ab and t_out <= t_kuehl - 2
               and (ah_diff is not number or ah_diff > 0 - ah_min_diff) -%}
         {%- if not win_open -%}
           {%- if co2 is number -%}
@@ -726,20 +828,29 @@ actions:
           {%- elif aktiv_nachlauf -%}
             {%- set ns.gruende = ns.gruende + ['Nachlüften nach ' ~ aktivitaet_name] -%}
           {%- endif -%}
+          {%- if nach_sperre -%}
+            {%- set ns.gruende = ns.gruende + ['Nach ' ~ sperre_name ~ ' lüften'] -%}
+          {%- endif -%}
           {%- set rest = ((cooldown | int) * 60 - (now_ts - geschlossen_seit)) if geschlossen_seit is number else 0 -%}
-          {%- if rest > 0 and not ns.dringend and ns.gruende | length > 0 -%}
+          {%- if sperre_aktiv and ns.gruende | length > 0 -%}
+            {%- set status = 'ok' -%}
+            {%- set ns.gruende = ['Lüften pausiert (' ~ sperre_name ~ ')'] -%}
+          {%- elif rest > 0 and not ns.dringend and ns.gruende | length > 0 -%}
             {%- set status = 'ok' -%}
             {%- set ns.gruende = ['Pause nach dem Lüften, noch ' ~ ((rest / 60) | round(0, 'ceil') | int) ~ ' Min.'] -%}
           {%- else -%}
             {%- set status = 'ok' if ns.gruende | length == 0 else ('dringend' if ns.dringend else 'lueften') -%}
           {%- endif -%}
         {%- else -%}
-          {%- if prev == 'schliessen' and not (nacht and not nacht_vorher) -%}
+          {%- if prev == 'schliessen' and not (dauer and not dauer_vorher) -%}
             {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or '')] -%}
-          {%- elif nacht -%}
-            {#- Nachtlüftung: offen bleiben erlaubt, nur echte Gründe zum Schließen -#}
+          {%- elif dauer -%}
+            {#- Dauerlüften: offen bleiben erlaubt, nur echte Gründe zum Schließen/Kippen -#}
             {%- if t_in is number and t_in < (nacht_min_temp | float(16)) -%}
-              {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C)'] -%}
+              {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C) – schließen oder nur kippen'] -%}
+            {%- endif -%}
+            {%- if (dauer_max_min | int(0)) > 0 and offen_min >= (dauer_max_min | int(0)) -%}
+              {%- set ns.gruende = ns.gruende + ['seit ' ~ (offen_min | int) ~ ' Min. offen'] -%}
             {%- endif -%}
             {%- if blockiert and offen_min >= 2 -%}
               {%- set ns.gruende = ns.gruende + ['Außenluft deutlich feuchter'] -%}
@@ -747,7 +858,7 @@ actions:
             {%- if offen_min >= 2 and rh_in is number and rh_in < rf_trocken -%}
               {%- set ns.gruende = ns.gruende + ['Raumluft wird zu trocken (' ~ rh_in ~ ' % rF)'] -%}
             {%- endif -%}
-            {%- if kuehlen_aktiv and offen_min >= 2 and t_in is number and t_out is number and t_out >= t_in + 1 -%}
+            {%- if kuehlen_aktiv and offen_min >= 2 and t_kuehl is number and t_out is number and t_out >= t_kuehl + 1 -%}
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}
           {%- elif nachtlueftung_beendet and max_min > 0 -%}
@@ -758,7 +869,7 @@ actions:
                   or (co2_rate_gueltig and co2_abfall < plateau_co2) -%}
             {%- set ah_ok = ah_diff is not number or ah_diff < 0.5
                   or (ah_rate_gueltig and ah_abfall < plateau_ah) -%}
-            {%- if hitzetag and not co2_hoch and offen_min >= 2 and t_in is number and t_in < hitze_vorkuehlen_ab -%}
+            {%- if hitzetag and not co2_hoch and offen_min >= 2 and t_kuehl is number and t_kuehl < hitze_vorkuehlen_ab -%}
               {%- set ns.gruende = ns.gruende + ['Raum vorgekühlt (' ~ t_in ~ ' °C)'] -%}
             {%- endif -%}
             {#- max_min 0 = ab 18 °C außen keine Maximaldauer (kein Heizverlust, Dauerlüften ok) -#}
@@ -777,7 +888,7 @@ actions:
               {%- set ns.gruende = ns.gruende + ['Raumluft wird zu trocken (' ~ rh_in ~ ' % rF)'] -%}
             {%- endif -%}
             {%- if kuehlen_aktiv and not co2_hoch and offen_min >= 2
-                  and t_in is number and t_out is number and t_out >= t_in -%}
+                  and t_kuehl is number and t_out is number and t_out >= t_kuehl -%}
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}
             {#- Plateau nur in der Heizsaison: ohne Heizverlust (max_min 0) kein Grund zum Schließen -#}
@@ -838,6 +949,11 @@ sensor:
     aktiv: "{{ aktiv_jetzt }}"
     aktiv_zuletzt: "{{ aktiv_zuletzt }}"
     nacht: "{{ nacht }}"
+    dauer: "{{ dauer }}"
+    dauerlueften: "{{ modus }}"
+    sperre_aktiv: "{{ sperre_aktiv }}"
+    sperre_beginn: "{{ sperre_beginn }}"
+    sperre_ende: "{{ sperre_ende }}"
     regengeschuetzt: "{{ regengeschuetzt }}"
     schliessen_seit: "{{ schliessen_seit }}"
     verlauf: "{{ verlauf }}"
