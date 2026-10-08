@@ -342,11 +342,23 @@ blueprint:
           default: 0
           selector:
             number: { min: 0, max: 600, step: 5, unit_of_measurement: min, mode: box }
+        dauer_fenster_warm:
+          name: Dauerlüften bei warmem Wetter (optional)
+          description: >-
+            Fenster/Türen, die erst ab „Dauerlüften erst ab Außentemperatur“ offen bleiben dürfen,
+            z. B. die Terrassentür, solange man draußen sitzt. Für sie ist „außen wärmer“ kein Grund zum Schließen.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
         dauer_ab_aussen:
           name: Dauerlüften erst ab Außentemperatur (°C)
           description: >-
             Darunter gelten die normalen Stoßlüft-Regeln (Heizverlust, kalte Laibungen bei Dauerkippen).
-            z. B. 10 für ein Arbeitszimmer. -30 = immer.
+            Ohne Fensterlisten gilt das für die ganze Zone, sonst nur für „Dauerlüften bei warmem Wetter“.
+            z. B. 16 für ein Arbeitszimmer. -30 = immer.
           default: -30
           selector:
             number: { min: -30, max: 18, step: 1, unit_of_measurement: "°C", mode: box }
@@ -438,6 +450,7 @@ actions:
       dauer_fenster: !input dauer_fenster
       dauer_max_min: !input dauer_max_min
       dauer_ab_aussen: !input dauer_ab_aussen
+      dauer_fenster_warm: !input dauer_fenster_warm
       e_sperre: !input sperre
       sperre_zustaende: !input sperre_zustaende
       sperre_name: !input sperre_name
@@ -758,15 +771,26 @@ actions:
         {{- modus == 'nachts' and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts -}}
       dauer: >-
         {%- set df = dauer_fenster if (dauer_fenster is iterable and dauer_fenster is not string) else ([dauer_fenster] if dauer_fenster else []) -%}
-        {#- Bei Fenstergruppen: alle offenen Mitglieder müssen Dauerlüft-Fenster sein -#}
-        {%- set mitglieder = (state_attr(e_win, 'entity_id') if e_win else none) or [] -%}
-        {%- set mitglieder = mitglieder if (mitglieder is iterable and mitglieder is not string) else [] -%}
-        {%- set offen = mitglieder | select('is_state', 'on') | list -%}
-        {%- set fenster_ok = df | count == 0 or ((df | select('is_state', 'on') | list | count > 0)
-              and (offen | reject('in', df) | list | count == 0)) -%}
+        {%- set dw = dauer_fenster_warm if (dauer_fenster_warm is iterable and dauer_fenster_warm is not string) else ([dauer_fenster_warm] if dauer_fenster_warm else []) -%}
         {%- set ab = (dauer_ab_aussen | float(-30)) - (1 if dauer_vorher else 0) -%}
-        {%- set warm_genug = ab <= -30 or t_out is not number or t_out >= ab -%}
-        {{- (modus == 'immer' or nacht) and fenster_ok and warm_genug -}}
+        {%- set warm = ab <= -30 or t_out is not number or t_out >= ab -%}
+        {%- if df | count == 0 and dw | count == 0 -%}
+          {%- set fenster_ok = warm -%}
+        {%- else -%}
+          {#- erlaubt: dauer_fenster immer, dauer_fenster_warm nur ab dauer_ab_aussen.
+              Bei Fenstergruppen müssen alle offenen Mitglieder erlaubt sein. -#}
+          {%- set erlaubt = df + (dw if warm else []) -%}
+          {%- set mitglieder = (state_attr(e_win, 'entity_id') if e_win else none) or [] -%}
+          {%- set mitglieder = mitglieder if (mitglieder is iterable and mitglieder is not string) else [] -%}
+          {%- set offen = mitglieder | select('is_state', 'on') | list -%}
+          {%- set fenster_ok = (erlaubt | select('is_state', 'on') | list | count > 0)
+                and (offen | reject('in', erlaubt) | list | count == 0) -%}
+        {%- endif -%}
+        {{- (modus == 'immer' or nacht) and fenster_ok -}}
+      # Durchgangstür (z. B. Terrasse) offen: „außen wärmer“ ist kein Grund zum Schließen
+      durchgang_offen: >-
+        {%- set dw = dauer_fenster_warm if (dauer_fenster_warm is iterable and dauer_fenster_warm is not string) else ([dauer_fenster_warm] if dauer_fenster_warm else []) -%}
+        {{- dauer and dw | select('is_state', 'on') | list | count > 0 -}}
       t_kuehl: >-
         {%- set v = (states(e_t_kuehl) | float(none)) if e_t_kuehl else none -%}
         {{- v if (v is number and -10 <= v <= 60) else t_in -}}
@@ -872,7 +896,7 @@ actions:
                 Wird jede Minute neu bewertet (Kontakt erkennt „gekippt“ nicht) – mit Hysterese. -#}
             {%- set h = prev == 'schliessen' -%}
             {%- if t_in is number and t_in < (nacht_min_temp | float(16)) + (0.5 if h else 0) -%}
-              {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C) – schließen oder nur kippen'] -%}
+              {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C)'] -%}
             {%- endif -%}
             {%- if (dauer_max_min | int(0)) > 0 and max_min > 0 and offen_min >= (dauer_max_min | int(0)) -%}
               {%- set ns.gruende = ns.gruende + ['seit ' ~ (offen_min | int) ~ ' Min. offen'] -%}
@@ -884,7 +908,7 @@ actions:
             {%- if offen_min >= 2 and rh_in is number and rh_in < rf_trocken + (2 if h else 0) -%}
               {%- set ns.gruende = ns.gruende + ['Raumluft wird zu trocken (' ~ rh_in ~ ' % rF)'] -%}
             {%- endif -%}
-            {%- if kuehlen_aktiv and offen_min >= 2 and t_in is number and t_out is number
+            {%- if kuehlen_aktiv and not durchgang_offen and offen_min >= 2 and t_in is number and t_out is number
                   and t_out >= t_in + (0.5 if h else 1) -%}
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}

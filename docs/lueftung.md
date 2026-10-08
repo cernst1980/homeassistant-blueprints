@@ -23,8 +23,10 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   das Fenster darf offen bleiben; Meldung „schließen oder nur kippen“ nur, wenn etwas dagegen spricht: Raum zu kalt
   (`nacht_min_temp`, Standard 16 °C), Außenluft deutlich feuchter oder wärmer, Raumluft zu trocken, optional nach
   `dauer_max_min` Minuten (nur in der Heizsaison). Wird jede Minute neu bewertet – wer statt zu schließen
-  kippt, bekommt keine weiteren Erinnerungen, sobald sich der Raum erholt. Mit `dauer_ab_aussen` (z. B. 10 °C)
-  gilt Dauerlüften erst ab dieser Außentemperatur, darunter die normalen Stoßlüft-Regeln. Mit `dauer_fenster` gilt das nur für bestimmte Fenster (z. B. Küchenfenster beim Kochen),
+  kippt, bekommt keine weiteren Erinnerungen, sobald sich der Raum erholt. Mit `dauer_ab_aussen` (z. B. 16 °C)
+  gilt Dauerlüften erst ab dieser Außentemperatur, darunter die normalen Stoßlüft-Regeln.
+  `dauer_fenster_warm`: Türen, die nur bei warmem Wetter offen bleiben dürfen (z. B. Terrassentür, solange man
+  draußen sitzt) – für sie ist „außen wärmer“ kein Grund zum Schließen. Mit `dauer_fenster` gilt das nur für bestimmte Fenster (z. B. Küchenfenster beim Kochen),
   sind weitere Öffnungen der Zone offen (Gruppe), gelten die normalen Regeln. Bei `nachts` zum Ende des Nachtfensters in der Heizsaison:
   „Nachtlüftung beendet“ (`nachtlueften: true` aus älteren Versionen entspricht `nachts`)
 - **Lüftungssperre** (optional, `sperre`): z. B. Beamer/AV-Receiver im Heimkino – während eines Films keine

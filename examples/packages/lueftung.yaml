@@ -176,6 +176,8 @@ template:
         # dauerlueften: "immer"                             # Fenster darf offen bleiben …
         # dauer_fenster: [binary_sensor.fenster_kueche]     # … aber nur das Küchenfenster (Kochen)
         # dauer_max_min: 60
+        # dauer_fenster_warm: [binary_sensor.terrassentuer] # Sommer: offen, solange wir draußen sitzen
+        # dauer_ab_aussen: 18
         # temp_kuehlen: sensor.wintergarten_temperatur      # wärmster Raumteil bestimmt "Kühlen"
     name: Lüftung Erdgeschoss
     unique_id: lueftung_erdgeschoss
