@@ -50,7 +50,11 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - Erinnerung bei Nichtbeachtung („lüften“ alle 30 Min., „dringend“ alle 15 Min.)
 - Warnung bei offenen Fenstern beim Verlassen des Hauses und bei Regen/Unwetter
   (Zonen mit `regengeschuetzt: true`, z. B. unter Vordach, nur bei Unwetter)
-- Reine Grundlüftung wird bei Regen/Unwetter zurückgestellt und nach dem Regen nachgeholt
+- Reine Grundlüftung (kein Messwert spricht fürs Lüften) wird standardmäßig nur „mitgenommen“
+  („Bei der Gelegenheit …“ in anderen Lüft-Meldungen) und einmal täglich still gesammelt gemeldet;
+  bei Regen/Unwetter wird sie zurückgestellt
+- Erledigt-Bestätigung: Wird nach „Jetzt lüften“ geöffnet bzw. nach „Fenster schließen“ geschlossen,
+  ersetzt eine stille ✅-Nachricht die Aufforderung auf allen Handys
 - Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt
 
 ## Installation

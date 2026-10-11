@@ -4,8 +4,8 @@ blueprint:
     Zentrale Benachrichtigung für alle Lüftungsstatus-Sensoren.
     „Jetzt lüften“ gebündelt und nur an Geräte, die zu Hause sind.
     „Fenster schließen“ pro Raum mit Erinnerung. Warnung bei offenen Fenstern
-    beim Verlassen des Hauses sowie bei Regen/Unwetter. Erledigte Nachrichten
-    werden automatisch entfernt.
+    beim Verlassen des Hauses sowie bei Regen/Unwetter. Reine Grundlüftung wird
+    mitgenommen bzw. einmal täglich gesammelt. Erledigtes wird still mit ✅ bestätigt.
   domain: automation
   source_url: https://github.com/cernst1980/homeassistant-blueprints/blob/main/blueprints/automation/lueftung/lueftung_benachrichtigung.yaml
   input:
@@ -47,6 +47,38 @@ blueprint:
       default: 30
       selector:
         number: { min: 0, max: 180, step: 5, unit_of_measurement: min, mode: box }
+    grundlueftung_meldung:
+      name: Grundlüftung melden
+      description: >-
+        Reine Grundlüftung (kein Messwert spricht fürs Lüften) ist selten eilig.
+        „Mitnehmen“ hängt sie an andere Lüft-Meldungen an („Bei der Gelegenheit …“),
+        optional einmal täglich als Sammelmeldung. Im Monitor bleibt sie immer sichtbar.
+      default: mitnehmen_taeglich
+      selector:
+        select:
+          options:
+            - label: Sofort eigene Meldung
+              value: sofort
+            - label: Mitnehmen + einmal täglich Sammelmeldung
+              value: mitnehmen_taeglich
+            - label: Nur mitnehmen
+              value: mitnehmen
+            - label: Nie melden (nur Monitor)
+              value: keine
+    grundlueftung_zeit:
+      name: Grundlüftung-Sammelmeldung um
+      default: "12:00:00"
+      selector:
+        time:
+    bestaetigung:
+      name: Bestätigen, wenn erledigt
+      description: >-
+        Wird ein Fenster nach „Jetzt lüften“ geöffnet bzw. nach „Fenster schließen“ geschlossen,
+        ersetzt eine stille Nachricht („✅ … erledigt“) die Aufforderung auf allen Handys –
+        so sieht jeder, dass sich schon jemand gekümmert hat.
+      default: true
+      selector:
+        boolean:
     erinnerung:
       name: Erinnerung „schließen“ alle (Min.)
       description: 0 = keine Erinnerung
@@ -162,6 +194,11 @@ triggers:
     from: [lueften, dringend, schliessen, offen]
     to: [ok, offen]
     id: erledigt
+  - trigger: state
+    entity_id: !input sensoren
+    from: schliessen
+    to: [lueften, dringend]
+    id: erledigt
   - trigger: numeric_state
     entity_id: zone.home
     below: 1
@@ -188,6 +225,9 @@ triggers:
   - trigger: time
     at: !input sensorbericht_zeit
     id: sensorbericht
+  - trigger: time
+    at: !input grundlueftung_zeit
+    id: grundlueftung
 
 variables:
   sensoren: !input sensoren
@@ -200,6 +240,10 @@ variables:
   abwesend_alle: !input abwesend_alle
   schliessen_nachts: !input schliessen_nachts
   web_ui: !input web_ui
+  grundlueftung_meldung: !input grundlueftung_meldung
+  bestaetigung: !input bestaetigung
+  verzoegerung: !input verzoegerung
+  grundlueftung_zeit: !input grundlueftung_zeit
   batterien: !input batterien
   batterie_min: !input batterie_min
   sensorbericht: >-
@@ -260,26 +304,40 @@ variables:
 
   # ---- Raumlisten ----
   bedarf: >-
-    {%- set ns = namespace(l=[], dringend=false) -%}
-    {%- for s in sensoren -%}
+    {%- set ns = namespace(l=[], mit=[], dringend=false) -%}
+    {%- for s in sensoren if states(s) in ['lueften', 'dringend'] -%}
       {%- set g = state_attr(s, 'grund') or '' -%}
+      {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
       {%- set nur_grundlueftung = g.startswith('Grundlüftung') and ' · ' not in g -%}
-      {%- if states(s) in ['lueften', 'dringend']
-            and not ((regen or unwetter) and nur_grundlueftung and not state_attr(s, 'regengeschuetzt')) -%}
-        {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
+      {%- if nur_grundlueftung -%}
+        {#- Reine Grundlüftung: nicht bei Regen/Unwetter; je nach Einstellung sofort oder mitnehmen -#}
+        {%- if not ((regen or unwetter) and not state_attr(s, 'regengeschuetzt')) -%}
+          {%- if grundlueftung_meldung == 'sofort' -%}{%- set ns.l = ns.l + [name ~ ': ' ~ g] -%}
+          {%- elif grundlueftung_meldung != 'keine' -%}{%- set ns.mit = ns.mit + [name] -%}{%- endif -%}
+        {%- endif -%}
+      {%- else -%}
         {%- set ns.l = ns.l + [name ~ ': ' ~ g] -%}
         {%- if is_state(s, 'dringend') -%}{%- set ns.dringend = true -%}{%- endif -%}
       {%- endif -%}
     {%- endfor -%}
-    {{- {'liste': ns.l, 'dringend': ns.dringend} -}}
+    {{- {'liste': ns.l, 'mit': ns.mit, 'dringend': ns.dringend} -}}
+  bedarf_text: >-
+    {{ bedarf.liste | join('\n') }}
+    {%- if bedarf.mit | length > 0 %}{{ '\n' }}Bei der Gelegenheit (Grundlüftung): {{ bedarf.mit | join(', ') }}{% endif %}
+    {%- if bedarf.liste | length + bedarf.mit | length > 1 %}{{ '\n' }}Tipp: Querlüften – Fenster gleichzeitig öffnen.{% endif %}
+    {%- if wetter_hinweis %}{{ '\n' ~ wetter_hinweis }}{% endif %}
   erinnerung_faellig: >-
     {%- set iv = erinnerung_lueften | int(0) -%}
     {%- set ns = namespace(f=false) -%}
     {%- if iv > 0 -%}
       {%- for st in expand(sensoren) if st.state in ['lueften', 'dringend'] -%}
-        {%- set i = (iv / 2) if st.state == 'dringend' else iv -%}
-        {%- set m = (as_timestamp(now()) - as_timestamp(st.last_changed, 0)) / 60 -%}
-        {%- if m >= i and (m % i) < 5 -%}{%- set ns.f = true -%}{%- endif -%}
+        {%- set g = st.attributes.grund | default('') or '' -%}
+        {%- set nur_g = g.startswith('Grundlüftung') and ' · ' not in g -%}
+        {%- if not nur_g or grundlueftung_meldung == 'sofort' -%}
+          {%- set i = (iv / 2) if st.state == 'dringend' else iv -%}
+          {%- set m = (as_timestamp(now()) - as_timestamp(st.last_changed, 0)) / 60 -%}
+          {%- if m >= i and (m % i) < 5 -%}{%- set ns.f = true -%}{%- endif -%}
+        {%- endif -%}
       {%- endfor -%}
     {%- endif -%}
     {{- ns.f -}}
@@ -334,10 +392,7 @@ actions:
           - "{{ not unwetter or bedarf.dringend }}"
         sequence:
           - variables:
-              text: >-
-                {{ bedarf.liste | join('\n') }}
-                {%- if bedarf.liste | length > 1 %}{{ '\n' }}Tipp: Querlüften – Fenster gleichzeitig öffnen.{% endif %}
-                {%- if wetter_hinweis %}{{ '\n' ~ wetter_hinweis }}{% endif %}
+              text: "{{ bedarf_text }}"
           - repeat:
               for_each: "{{ ziele_bedarf }}"
               sequence:
@@ -356,6 +411,35 @@ actions:
                   notification_id: lueftung_bedarf
                   title: "🪟 Jetzt lüften"
                   message: "{{ text }}"
+
+      # ---------- Grundlüftung: einmal täglich Sammelmeldung ----------
+      - conditions:
+          - condition: trigger
+            id: grundlueftung
+          - "{{ grundlueftung_meldung == 'mitnehmen_taeglich' }}"
+          - "{{ bedarf.mit | length > 0 and bedarf.liste | length == 0 }}"
+          - "{{ not ruhezeit and ziele_bedarf | length > 0 }}"
+        sequence:
+          - repeat:
+              for_each: "{{ ziele_bedarf }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  data:
+                    title: "🪟 Grundlüftung fällig"
+                    message: >-
+                      {{ bedarf.mit | join(', ') }} – je 5 Min. stoßlüften
+                      {%- if bedarf.mit | length > 1 %} (am besten gleichzeitig){% endif %}.
+                    data:
+                      tag: lueftung_bedarf
+                      push:
+                        interruption-level: passive
+          - if: "{{ web_ui }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: lueftung_bedarf
+                  title: "🪟 Grundlüftung fällig"
+                  message: "{{ bedarf.mit | join(', ') }}"
 
       # ---------- Fenster schließen (pro Raum, mit Erinnerung) ----------
       - conditions:
@@ -564,17 +648,40 @@ actions:
             data:
               notification_id: lueftung_abwesend
 
-      # ---------- Erledigt: Nachrichten aufräumen ----------
+      # ---------- Erledigt: Nachrichten aufräumen bzw. bestätigen ----------
       - conditions:
           - condition: trigger
             id: erledigt
         sequence:
           - variables:
+              raum: "{{ state_attr(trigger.entity_id, 'raum') or state_attr(trigger.entity_id, 'friendly_name') }}"
+              von: "{{ trigger.from_state.state }}"
+              nach: "{{ trigger.to_state.state }}"
+              # Wurde die Aufforderung (vermutlich) verschickt? „lüften“ erst nach der Verzögerung.
+              war_gemeldet: >-
+                {%- set seit = as_timestamp(trigger.from_state.last_changed, 0) -%}
+                {%- set dauer = (as_timestamp(now()) - seit) / 60 -%}
+                {%- set g = trigger.from_state.attributes.grund | default('') or '' -%}
+                {%- set nur_g = g.startswith('Grundlüftung') and ' · ' not in g -%}
+                {%- if von in ['dringend', 'schliessen'] -%}{{- true -}}
+                {%- elif von != 'lueften' or ruhezeit -%}{{- false -}}
+                {%- elif nur_g and grundlueftung_meldung != 'sofort' -%}
+                  {#- reine Grundlüftung: nur, wenn die Sammelmeldung heute schon raus ist -#}
+                  {%- set t = as_timestamp(today_at(grundlueftung_zeit)) -%}
+                  {{- grundlueftung_meldung == 'mitnehmen_taeglich' and seit < t <= as_timestamp(now()) -}}
+                {%- else -%}{{- dauer >= (verzoegerung | int(0)) -}}{%- endif -%}
+              # ✅ beim Öffnen nach „lüften“ und beim Schließen nach „schließen“
+              bestaetigen: >-
+                {{- bestaetigung and war_gemeldet
+                    and ((von in ['lueften', 'dringend'] and nach == 'offen')
+                         or (von == 'schliessen' and nach in ['ok', 'lueften', 'dringend'])) -}}
+              offene_bedarf: "{{ bedarf.liste | length + bedarf.mit | length }}"
               tags: >-
-                {%- set t = ['lueftung_schliessen_' ~ (trigger.entity_id | replace('.', '_'))] -%}
+                {%- set t = [] -%}
+                {%- if not (bestaetigen and von == 'schliessen') -%}{%- set t = t + ['lueftung_schliessen_' ~ (trigger.entity_id | replace('.', '_'))] -%}{%- endif -%}
                 {%- if offen_alle | length == 0 -%}{%- set t = t + ['lueftung_wetter'] -%}{%- endif -%}
                 {%- if not jemand_da and offene_fenster | length == 0 -%}{%- set t = t + ['lueftung_abwesend'] -%}{%- endif -%}
-                {%- if trigger.from_state.state in ['lueften', 'dringend'] and bedarf.liste | length == 0 -%}{%- set t = t + ['lueftung_bedarf'] -%}{%- endif -%}
+                {%- if von in ['lueften', 'dringend'] and offene_bedarf == 0 and not bestaetigen -%}{%- set t = t + ['lueftung_bedarf'] -%}{%- endif -%}
                 {{- t -}}
           - repeat:
               for_each: "{{ tags }}"
@@ -592,24 +699,53 @@ actions:
                           message: clear_notification
                           data:
                             tag: "{{ tag_aktuell }}"
-          # Lüften-Liste still aktualisieren, wenn noch andere Räume offen sind
-          - if: "{{ trigger.from_state.state in ['lueften', 'dringend'] and bedarf.liste | length > 0 }}"
+          # Fenster geschlossen: „schließen“-Nachricht still durch ✅ ersetzen
+          - if: "{{ bestaetigen and von == 'schliessen' }}"
             then:
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: "lueftung_schliessen_{{ trigger.entity_id | replace('.', '_') }}"
+              - repeat:
+                  for_each: "{{ ziele_dringlich }}"
+                  sequence:
+                    - action: "{{ repeat.item }}"
+                      data:
+                        title: "✅ {{ raum }}: Fenster geschlossen"
+                        message: "Erledigt um {{ now().strftime('%H:%M') }}."
+                        data:
+                          tag: "lueftung_schliessen_{{ trigger.entity_id | replace('.', '_') }}"
+                          push:
+                            interruption-level: passive
+          # Lüften: ✅ bestätigen und/oder die Liste der übrigen Räume still aktualisieren
+          - if: "{{ von in ['lueften', 'dringend'] and (bestaetigen or offene_bedarf > 0) }}"
+            then:
+              - variables:
+                  titel: "{{ '🪟 Jetzt lüften' if bedarf.liste | length > 0 else '✅ Lüften erledigt' }}"
+                  text: >-
+                    {%- if bestaetigen %}✅ {{ raum }}: Fenster geöffnet ({{ now().strftime('%H:%M') }}){% endif %}
+                    {%- if bestaetigen and offene_bedarf > 0 %}{{ '\n' }}{% endif %}
+                    {%- if offene_bedarf > 0 %}{{ bedarf_text }}{% endif %}
               - repeat:
                   for_each: "{{ ziele_bedarf }}"
                   sequence:
                     - action: "{{ repeat.item }}"
                       data:
-                        title: "🪟 Jetzt lüften"
-                        message: "{{ bedarf.liste | join('\n') }}"
+                        title: "{{ titel }}"
+                        message: "{{ text }}"
                         data:
                           tag: lueftung_bedarf
                           push:
                             interruption-level: passive
               - if: "{{ web_ui }}"
                 then:
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: lueftung_bedarf
-                      title: "🪟 Jetzt lüften"
-                      message: "{{ bedarf.liste | join('\n') }}"
+                  - if: "{{ offene_bedarf > 0 }}"
+                    then:
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: lueftung_bedarf
+                          title: "{{ titel }}"
+                          message: "{{ text }}"
+                    else:
+                      - action: persistent_notification.dismiss
+                        data:
+                          notification_id: lueftung_bedarf
