@@ -17,10 +17,12 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   (gemessen oder über den Temperaturfaktor fRsi nach DIN 4108-2 geschätzt)
 - **Schimmelrisiko über Zeit:** gleitende Feuchtestunden (Wand-rF ≥ 80 % voll, 75–80 % halb, Abklingzeit ca. 3 Tage)
 - **CO₂** (optional): Richtwerte nach UBA; Sommer-Block bei feuchter Außenluft
-- **Grundlüftung:** Zonen ohne CO₂-Wert bekommen spätestens alle 8 h (einstellbar) eine Lüftempfehlung –
-  nicht bei feuchterer oder wärmerer Außenluft, optional erst ab einer Uhrzeit (z. B. Bad nach der Duschzeit)
+- **Grundlüftung (optional):** Zonen ohne CO₂-Wert, die länger als `grundlueftung_h` (Standard 24 h) nicht gelüftet
+  wurden, bleiben „ok“ mit dem Hinweis „Grundlüftung fällig“ (Attribut `grundlueftung_faellig`); die Benachrichtigung
+  erwähnt sie nur, wenn ohnehin ein anderer Raum gelüftet werden muss. Nicht bei feuchterer oder wärmerer Außenluft,
+  optional erst ab einer Uhrzeit (z. B. Bad nach der Duschzeit)
 - **Dauerlüften** (optional, `dauerlueften: nachts` oder `immer`): z. B. Schlafzimmer nachts oder Büro tagsüber –
-  das Fenster darf offen bleiben; Meldung „schließen oder nur kippen“ nur, wenn etwas dagegen spricht: Raum zu kalt
+  das Fenster darf offen bleiben; Meldung „schließen“ nur, wenn etwas dagegen spricht: Raum zu kalt
   (`nacht_min_temp`, Standard 16 °C), Außenluft deutlich feuchter oder wärmer, Raumluft zu trocken, optional nach
   `dauer_max_min` Minuten (nur in der Heizsaison). Wird jede Minute neu bewertet – wer statt zu schließen
   kippt, bekommt keine weiteren Erinnerungen, sobald sich der Raum erholt. Mit `dauer_ab_aussen` (z. B. 16 °C)

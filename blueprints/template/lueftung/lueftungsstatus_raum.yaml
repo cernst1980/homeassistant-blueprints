@@ -2,7 +2,7 @@ blueprint:
   name: Lüftungsstatus pro Raum
   description: >-
     Liefert pro Raum einen Status-Sensor mit den Zuständen
-    ok / lueften / dringend / offen / schliessen.
+    ok / lueften / dringend / offen / schliessen / keine_daten.
     Bewertet CO₂ (optional), absolute Feuchte innen/außen, Schimmelrisiko an der
     kältesten Wandstelle (gemessen oder über fRsi geschätzt), Feuchtespitzen
     (z. B. Duschen) und beim offenen Fenster die Wirksamkeit (Plateau-Erkennung).
@@ -121,7 +121,9 @@ blueprint:
       input:
         sperre:
           name: Während diese Entitäten aktiv sind, nicht zum Lüften auffordern
-          description: z. B. Beamer/AV-Receiver im Heimkino (Lautstärke, Nachbarn).
+          description: >-
+            z. B. Beamer/AV-Receiver im Heimkino (Lautstärke, Nachbarn). Unterdrückt auch „dringend“;
+            danach (ab „Mindestdauer“) „Nach … lüften“.
           default: []
           selector:
             entity:
@@ -270,9 +272,10 @@ blueprint:
         grundlueftung_h:
           name: Grundlüftung spätestens alle (Std.)
           description: >-
-            Nur für Zonen ohne (gültigen) CO₂-Wert: Wurde so lange nicht gelüftet, wird Lüften
-            empfohlen. 0 = aus. Nicht bei deutlich wärmerer oder (Sommer-Block) feuchterer Außenluft.
-          default: 8
+            Nur für Zonen ohne (gültigen) CO₂-Wert: Wurde so lange nicht gelüftet, ist Grundlüftung fällig.
+            Der Status bleibt „ok“ (Attribut grundlueftung_faellig); die Benachrichtigung erwähnt die Zone,
+            wenn ohnehin gelüftet wird. 0 = aus. Nicht bei deutlich wärmerer oder (Sommer-Block) feuchterer Außenluft.
+          default: 24
           selector:
             number: { min: 0, max: 48, step: 1, unit_of_measurement: h, mode: box }
         grundlueftung_min:
@@ -317,7 +320,7 @@ blueprint:
           selector:
             time:
         nacht_min_temp:
-          name: Dauerlüften – schließen/kippen unter (°C)
+          name: Dauerlüften – schließen unter (°C)
           description: >-
             Kühlt der Raum stärker aus, steigt das Schimmelrisiko an Wänden und Laibungen.
             Schlafraum etwa 16 °C, Arbeitsraum 19 °C, Wohnraum 19–20 °C.
@@ -814,13 +817,13 @@ actions:
       nach_sperre: >-
         {{- (sperre_min | int(0)) > 0 and not sperre_aktiv and sperre_ende is number and sperre_beginn is number
             and (sperre_ende - sperre_beginn) >= (sperre_min | int(0)) * 60
-            and now_ts - sperre_ende < 43200
+            and now_ts - sperre_ende >= 300 and now_ts - sperre_ende < 43200
             and (zuletzt_gelueftet is not number or zuletzt_gelueftet < sperre_ende) -}}
 
   # Entscheidung
   - variables:
       ergebnis: >-
-        {%- set ns = namespace(dringend=false, gruende=[]) -%}
+        {%- set ns = namespace(dringend=false, gruende=[], grund='', gf=false) -%}
         {%- set hyst = prev in ['lueften', 'dringend'] -%}
         {%- set ah_diff = (ah_in - ah_out) if (ah_in is number and ah_out is number) else none -%}
         {%- set trocken = ah_diff is number and ah_diff >= (ah_min_diff - (0.3 if hyst else 0)) -%}
@@ -867,7 +870,7 @@ actions:
                 and not (ah_diff is number and ah_diff < 0 - ah_min_diff)
                 and seit_h >= (grundlueftung_h | float(0))
                 and (t_in is not number or t_out is not number or t_out <= t_in + 1) -%}
-            {%- set ns.gruende = ns.gruende + ['Grundlüftung, seit ' ~ (seit_h | round(0) | int) ~ ' h nicht gelüftet'] -%}
+            {%- set ns.grund = 'Grundlüftung fällig, seit ' ~ (seit_h | round(0) | int) ~ ' h nicht gelüftet' -%}
           {%- endif -%}
           {#- Aktivität: Schadstoffe, die kein Sensor misst → auch bei feuchter Außenluft -#}
           {%- if aktiv_jetzt -%}
@@ -885,6 +888,11 @@ actions:
           {%- elif rest > 0 and not ns.dringend and ns.gruende | length > 0 -%}
             {%- set status = 'ok' -%}
             {%- set ns.gruende = ['Pause nach dem Lüften, noch ' ~ ((rest / 60) | round(0, 'ceil') | int) ~ ' Min.'] -%}
+          {%- elif ns.gruende | length == 0 and ns.grund and not sperre_aktiv -%}
+            {#- Grundlüftung allein ist kein Lüftbedarf: Status ok, Hinweis im Grund (wird bei anderem Bedarf mitgenommen) -#}
+            {%- set status = 'ok' -%}
+            {%- set ns.gf = true -%}
+            {%- set ns.gruende = [ns.grund] -%}
           {%- else -%}
             {%- set status = 'ok' if ns.gruende | length == 0 else ('dringend' if ns.dringend else 'lueften') -%}
           {%- endif -%}
@@ -893,20 +901,23 @@ actions:
             {#- Dauerlüften: offen bleiben erlaubt, nur echte Gründe zum Schließen/Kippen.
                 Wird jede Minute neu bewertet (Kontakt erkennt „gekippt“ nicht) – mit Hysterese. -#}
             {%- set h = prev == 'schliessen' -%}
-            {%- if t_in is number and t_in < (nacht_min_temp | float(16)) + (0.5 if h else 0) -%}
+            {#- erst nach 2 Min. und nicht, solange die Luft noch verbraucht ist (Stoßlüften nach „lüften“) -#}
+            {%- set co2_hoch = co2 is number and co2 >= co2_lueften -%}
+            {%- set bewerten = offen_min >= 2 and not co2_hoch -%}
+            {%- if bewerten and t_in is number and t_in < (nacht_min_temp | float(16)) + (0.5 if h else 0) -%}
               {%- set ns.gruende = ns.gruende + ['Raum zu kalt (' ~ t_in ~ ' °C)'] -%}
             {%- endif -%}
             {%- if (dauer_max_min | int(0)) > 0 and max_min > 0 and offen_min >= (dauer_max_min | int(0)) -%}
               {%- set ns.gruende = ns.gruende + ['seit ' ~ (offen_min | int) ~ ' Min. offen'] -%}
             {%- endif -%}
-            {%- if (sommer_block | float(0)) > 0 and offen_min >= 2 and ah_diff is number
+            {%- if (sommer_block | float(0)) > 0 and bewerten and ah_diff is number
                   and ah_diff <= 0 - (sommer_block | float(0)) + (0.3 if h else 0) -%}
               {%- set ns.gruende = ns.gruende + ['Außenluft deutlich feuchter'] -%}
             {%- endif -%}
-            {%- if offen_min >= 2 and rh_in is number and rh_in < rf_trocken + (2 if h else 0) -%}
+            {%- if bewerten and rh_in is number and rh_in < rf_trocken + (2 if h else 0) -%}
               {%- set ns.gruende = ns.gruende + ['Raumluft wird zu trocken (' ~ rh_in ~ ' % rF)'] -%}
             {%- endif -%}
-            {%- if kuehlen_aktiv and not durchgang_offen and offen_min >= 2 and t_in is number and t_out is number
+            {%- if kuehlen_aktiv and not durchgang_offen and bewerten and t_in is number and t_out is number
                   and t_out >= t_in + (0.5 if h else 1) -%}
               {%- set ns.gruende = ns.gruende + ['außen wärmer als innen'] -%}
             {%- endif -%}
@@ -951,22 +962,32 @@ actions:
           {%- endif -%}
           {%- set status = 'schliessen' if ns.gruende | length > 0 else 'offen' -%}
         {%- endif -%}
-        {{- {'status': status, 'grund': ns.gruende | join(' · ')} -}}
+        {{- {'status': status, 'grund': ns.gruende | join(' · '), 'gf': ns.gf} -}}
 
-  # Empfehlung befolgt: Fenster nach „lüften“/„dringend“ geöffnet (für die Erledigt-Bestätigung).
-  # Bleibt bis zur nächsten befolgten Empfehlung stehen.
+  # Empfehlung befolgt (für die Erledigt-Bestätigung): Fenster nach „lüften“/„dringend“ geöffnet,
+  # oder bei fälliger Grundlüftung mind. grundlueftung_min offen. Bleibt bis zum nächsten Mal stehen.
   - variables:
-      befolgt: "{{ win_open and prev in ['lueften', 'dringend'] }}"
-      erledigt_ts: >-
-        {%- if befolgt -%}{{- now_ts -}}
-        {%- else -%}{{- state_attr(selbst, 'erledigt_ts') if selbst else none -}}{%- endif -%}
+      gl_alt: "{{ state_attr(selbst, 'grundlueftung_seit') if selbst else none }}"
+      ets_alt: "{{ state_attr(selbst, 'erledigt_ts') if selbst else none }}"
+      befolgt_grund: >-
+        {{- win_open and gl_alt is number and offen_seit is number
+            and offen_min >= (grundlueftung_min | float(3))
+            and (ets_alt is not number or ets_alt < offen_seit) -}}
+      befolgt: "{{ (win_open and prev in ['lueften', 'dringend']) or befolgt_grund }}"
+      grundlueftung_seit: >-
+        {%- if ergebnis.gf and not keine_daten -%}{{- gl_alt if gl_alt is number else now_ts -}}
+        {%- elif win_open and not befolgt_grund -%}{{- gl_alt -}}
+        {%- else -%}{{- none -}}{%- endif -%}
+      erledigt_ts: "{{ now_ts if befolgt else ets_alt }}"
       erledigt_min: >-
-        {%- if befolgt -%}
+        {%- if befolgt_grund -%}{{- ((offen_seit - gl_alt) / 60) | round(1) -}}
+        {%- elif befolgt -%}
           {%- set st = expand(selbst) | first if selbst else none -%}
           {{- (((now_ts - as_timestamp(st.last_changed, now_ts)) / 60) | round(1)) if st else 0 -}}
         {%- else -%}{{- state_attr(selbst, 'erledigt_min') if selbst else none -}}{%- endif -%}
       erledigt_grund: >-
-        {%- if befolgt -%}{{- (('dringend: ' if prev == 'dringend' else '') ~ (state_attr(selbst, 'grund') or '')) -}}
+        {%- if befolgt_grund -%}Grundlüftung fällig
+        {%- elif befolgt -%}{{- (('dringend: ' if prev == 'dringend' else '') ~ (state_attr(selbst, 'grund') or '')) -}}
         {%- else -%}{{- state_attr(selbst, 'erledigt_grund') if selbst else none -}}{%- endif -%}
 
   - variables:
@@ -1015,6 +1036,8 @@ sensor:
     t_min_offen: "{{ t_min_offen }}"
     geschlossen_seit: "{{ geschlossen_seit }}"
     zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
+    grundlueftung_faellig: "{{ (not keine_daten) and ergebnis.gf }}"
+    grundlueftung_seit: "{{ grundlueftung_seit }}"
     erledigt_ts: "{{ erledigt_ts }}"
     erledigt_min: "{{ erledigt_min }}"
     erledigt_grund: "{{ erledigt_grund }}"
