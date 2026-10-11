@@ -953,6 +953,22 @@ actions:
         {%- endif -%}
         {{- {'status': status, 'grund': ns.gruende | join(' · ')} -}}
 
+  # Empfehlung befolgt: Fenster nach „lüften“/„dringend“ geöffnet (für die Erledigt-Bestätigung).
+  # Bleibt bis zur nächsten befolgten Empfehlung stehen.
+  - variables:
+      befolgt: "{{ win_open and prev in ['lueften', 'dringend'] }}"
+      erledigt_ts: >-
+        {%- if befolgt -%}{{- now_ts -}}
+        {%- else -%}{{- state_attr(selbst, 'erledigt_ts') if selbst else none -}}{%- endif -%}
+      erledigt_min: >-
+        {%- if befolgt -%}
+          {%- set st = expand(selbst) | first if selbst else none -%}
+          {{- (((now_ts - as_timestamp(st.last_changed, now_ts)) / 60) | round(1)) if st else 0 -}}
+        {%- else -%}{{- state_attr(selbst, 'erledigt_min') if selbst else none -}}{%- endif -%}
+      erledigt_grund: >-
+        {%- if befolgt -%}{{- (('dringend: ' if prev == 'dringend' else '') ~ (state_attr(selbst, 'grund') or '')) -}}
+        {%- else -%}{{- state_attr(selbst, 'erledigt_grund') if selbst else none -}}{%- endif -%}
+
   - variables:
       schliessen_seit: >-
         {%- if ergebnis.status != 'schliessen' -%}{{- none -}}
@@ -999,6 +1015,9 @@ sensor:
     t_min_offen: "{{ t_min_offen }}"
     geschlossen_seit: "{{ geschlossen_seit }}"
     zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
+    erledigt_ts: "{{ erledigt_ts }}"
+    erledigt_min: "{{ erledigt_min }}"
+    erledigt_grund: "{{ erledigt_grund }}"
     aktiv: "{{ aktiv_jetzt }}"
     aktiv_zuletzt: "{{ aktiv_zuletzt }}"
     nacht: "{{ nacht }}"
