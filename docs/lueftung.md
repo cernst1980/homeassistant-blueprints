@@ -102,3 +102,10 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 Getestet mit Home Assistant 2026.9.
 
 [← Zurück zur Übersicht](../README.md)
+
+## Tests
+
+`tests/lueftung` spielt typische Abläufe mit einem kleinen HA-Nachbau durch (`ha_sim.py`):
+CO₂-Lüften und Plateau, Maximaldauer, Grundlüftung, Dauerlüften, Küche/Terrasse, Wintergarten,
+Sperre, 3D-Druck, Sensorausfälle sowie Raumlisten und Bestätigungen der Benachrichtigung.
+Sie laufen bei jedem Push automatisch (`python3 -m pytest tests -q`).
