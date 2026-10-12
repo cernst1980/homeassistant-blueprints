@@ -116,21 +116,68 @@ def test_gleichzeitig_geoeffnet_nur_eine_meldung():
     assert sorted(ergebnisse) == ["nicht_letzter", "senden"]
 
 
-def test_erledigt_tags():
+def test_erledigt_tags_und_schliessen_liste():
     w = welt()
-    for e in SENSOREN:
-        zone(w, e, "ok")
+    zone(w, "sensor.buero", "ok")
+    zone(w, "sensor.wc", "schliessen", "seit 12 Min. offen", 5)
+    zone(w, "sensor.kino", "ok")
+    zone(w, "sensor.bad", "ok")
     n = Notify(w, SENSOREN)
     b = n.branch("erledigt")
 
-    def tags(von, nach):
-        t = trigger("sensor.buero", von, nach, tid="erledigt")
+    def lauf(von, nach, seit_s=300):
+        t = trigger("sensor.buero", von, nach, tid="erledigt", changed=w.now - seit_s)
         env, c = n.context(t)
         n.variables(b["sequence"][0], env, c)
-        # lueftung_wetter wird ohnehin entfernt, wenn kein Fenster offen ist
-        return [x for x in c["tags"] if x != "lueftung_wetter"], c["geschlossen_ok"]
+        tags = [x for x in c["tags"] if x != "lueftung_wetter"]
+        text = None
+        if n.w.render(env, b["sequence"][2]["if"], c) is True:
+            n.variables(b["sequence"][2]["then"][0], env, c)
+            text = c["text"]
+        return tags, text
 
-    assert tags("lueften", "ok") == (["lueftung_schliessen_sensor_buero", "lueftung_bedarf"], False)
-    assert tags("lueften", "offen") == (["lueftung_schliessen_sensor_buero"], False)
-    assert tags("lueften", "schliessen") == ([], False)
-    assert tags("schliessen", "ok") == ([], True)
+    assert lauf("lueften", "ok")[0] == ["lueftung_bedarf"]
+    assert lauf("lueften", "offen")[0] == []
+    # Büro geschlossen, WC noch offen → Liste still aktualisieren
+    tags, text = lauf("schliessen", "ok")
+    assert tags == [] and text.startswith("✅ BUERO geschlossen") and "Noch offen:\nWC: seit 12 Min." in text
+    # Grund weggefallen, Fenster aber offen → kein ✅
+    tags, text = lauf("schliessen", "offen")
+    assert "✅" not in text and "WC:" in text
+    # Meldung war noch gar nicht raus (< 100 s) → nichts senden
+    assert lauf("schliessen", "ok", seit_s=30)[1] is None
+    # letzter Raum geschlossen → ✅ ersetzt die Nachricht
+    zone(w, "sensor.wc", "ok")
+    tags, text = lauf("schliessen", "ok")
+    assert tags == [] and text.startswith("✅ BUERO geschlossen") and "Noch offen" not in text
+    tags, text = lauf("schliessen", "offen")
+    assert tags == ["lueftung_schliessen"] and text is None
+
+
+def test_schliessen_gesammelt():
+    w = welt()
+    zone(w, "sensor.buero", "schliessen", "Luft ist ausgetauscht", 2)
+    zone(w, "sensor.wc", "schliessen", "seit 10 Min. offen", 1)
+    zone(w, "sensor.kino", "ok")
+    zone(w, "sensor.bad", "ok", regengeschuetzt=True)
+    w.set("weather.home", "rainy")
+    n = Notify(w, SENSOREN)
+    b = n.branch("schliessen")
+    seq = b["sequence"]
+
+    def lauf(entity, minuten):
+        t = trigger(entity, "offen", "schliessen", tid="schliessen")
+        env, c = n.context(t)
+        c["mein_ts"] = w.now - minuten * 60
+        aktiv = n.w.render(env, seq[2]["value_template"], c)
+        if aktiv is not True:
+            return None
+        inner = seq[3]["repeat"]["sequence"]
+        n.variables(inner[1], env, c)
+        return c["titel"], c["text"]
+
+    assert lauf("sensor.buero", 2) is None            # neuerer Raum übernimmt
+    titel, text = lauf("sensor.wc", 1)
+    assert titel == "🪟 Fenster schließen (2)"
+    assert text.splitlines()[:2] == ["BUERO: Luft ist ausgetauscht", "WC: seit 10 Min. offen"]
+    assert "🌧 Es regnet" in text

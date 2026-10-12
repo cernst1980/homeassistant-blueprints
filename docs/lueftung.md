@@ -47,7 +47,7 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 ## Benachrichtigungen
 
 - „Jetzt lüften“ gebündelt, nur an Geräte zu Hause, Ruhezeit, Querlüften-Tipp, Regen-/Unwetter-Hinweis
-- „Fenster schließen“ pro Zone mit Erinnerung; in der Ruhezeit erst morgens (z. B. gekipptes Schlafzimmerfenster)
+- „Fenster schließen“ gesammelt (alle Räume in einer Nachricht, kurz gesammelt) mit Erinnerung; in der Ruhezeit erst morgens (z. B. gekipptes Schlafzimmerfenster); geschlossene Räume verschwinden still aus der Liste, zuletzt „✅ … geschlossen“
 - Offene Empfehlungen werden nach der Ruhezeit und nach dem Heimkommen nachgeholt
 - Erinnerung bei Nichtbeachtung („lüften“ alle 30 Min., „dringend“ alle 15 Min.)
 - Warnung bei offenen Fenstern beim Verlassen des Hauses und bei Regen/Unwetter
@@ -56,8 +56,8 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   wenn ohnehin ein anderer Raum gelüftet werden muss („Bei der Gelegenheit auch: …“ – alles auf einmal);
   bei Regen/Unwetter entfällt sie. Optional: sofort oder als tägliche Sammelmeldung
 - Erledigt-Bestätigung: Einige Minuten nach dem letzten geöffneten Fenster kommt eine stille Nachricht
-  („✅ Büro, WC, Heimkino“), vergessene Räume werden darin genannt. „Fenster schließen“ wird pro Raum sofort
-  durch „✅ … geschlossen“ ersetzt
+  („✅ Büro, WC, Heimkino“), vergessene Räume werden darin genannt; beim Schließen wird die Liste still
+  aktualisiert, zuletzt „✅ … geschlossen“
 - Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt
 
 ## Installation
