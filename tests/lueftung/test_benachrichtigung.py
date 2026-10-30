@@ -129,7 +129,7 @@ def test_erledigt_tags_und_schliessen_liste():
         t = trigger("sensor.buero", von, nach, tid="erledigt", changed=w.now - seit_s)
         env, c = n.context(t)
         n.variables(b["sequence"][0], env, c)
-        tags = [x for x in c["tags"] if x != "lueftung_wetter"]
+        tags = [x for x in c["tags"] if x not in ("lueftung_wetter", "lueftung_nacht")]
         text = None
         if n.w.render(env, b["sequence"][2]["if"], c) is True:
             n.variables(b["sequence"][2]["then"][0], env, c)
@@ -282,3 +282,61 @@ def test_sensorbericht_meldet_schwache_batterie():
     w.set("sensor.bad_batterie", 9, {"friendly_name": "Bad Thermometer Batterie", "device_class": "battery"})
     _, c = Notify(w, SENSOREN).context()
     assert "🔋 Bad Thermometer Batterie: 9 %" in c["sensorbericht"]
+
+
+def _zwei_handys(w, fokus_chris="off", fokus_steffi="off"):
+    w.devices["chris"] = ["device_tracker.chris", "binary_sensor.chris_focus"]
+    w.devices["steffi"] = ["device_tracker.steffi", "binary_sensor.steffi_focus"]
+    w.set("device_tracker.chris", "home")
+    w.set("device_tracker.steffi", "home")
+    w.set("binary_sensor.chris_focus", fokus_chris)
+    w.set("binary_sensor.steffi_focus", fokus_steffi)
+    return dict(geraete=["chris", "steffi"], schlaf_entitaeten=["binary_sensor.chris_focus", "binary_sensor.steffi_focus"])
+
+
+def test_schlafmodus_pro_person():
+    w = World(dt.datetime(2026, 10, 30, 23, 0))
+    for e in SENSOREN:
+        zone(w, e, "ok")
+    _, c = Notify(w, SENSOREN, **_zwei_handys(w, fokus_chris="on")).context()
+    assert c["ziele_wach"] == ["notify.mobile_app_steffi"] and c["ruhezeit"] is False
+    _, c = Notify(w, SENSOREN, **_zwei_handys(w, "on", "on")).context()
+    assert c["ziele_wach"] == [] and c["ruhezeit"] is True
+    # Fokus tagsüber (Arbeiten) ist kein Schlaf
+    w.now = int(dt.datetime(2026, 10, 30, 14, 0).timestamp())
+    _, c = Notify(w, SENSOREN, **_zwei_handys(w, "on", "on")).context()
+    assert len(c["ziele_wach"]) == 2 and c["ruhezeit"] is False
+
+
+def test_feste_ruhezeit_ohne_schlafmodus():
+    w = World(dt.datetime(2026, 10, 30, 23, 0))
+    for e in SENSOREN:
+        zone(w, e, "ok")
+    _, c = Notify(w, SENSOREN).context()
+    assert c["ruhezeit"] is True and c["ziele_wach"] == []
+    w.now = int(dt.datetime(2026, 10, 30, 8, 0).timestamp())
+    _, c = Notify(w, SENSOREN).context()
+    assert c["ruhezeit"] is False
+
+
+def test_gute_nacht_check():
+    w = World(dt.datetime(2026, 10, 30, 22, 30))
+    zone(w, "sensor.buero", "offen")
+    zone(w, "sensor.wc", "ok")
+    zone(w, "sensor.kino", "ok")
+    zone(w, "sensor.bad", "offen", nacht=True)        # z. B. Schlafzimmer mit Nachtlüftung
+    inputs = _zwei_handys(w)
+    n = Notify(w, SENSOREN, **inputs)
+    b = n.branch("gute_nacht")
+    w.set("binary_sensor.chris_focus", "on")
+    t = trigger("binary_sensor.chris_focus", "off", "on", tid="gute_nacht")
+    t["platform"] = "state"
+    env, c = n.context(t)
+    assert c["offen_nachts"] == ["BUERO"]
+    assert all(n.w.render(env, cond, c) is True for cond in b["conditions"][1:])
+    n.variables(b["sequence"][0], env, c)
+    assert c["empfaenger"] == ["notify.mobile_app_chris"]
+    # feste Uhrzeit zählt nur ohne Schlafmodus
+    t2 = {"id": "gute_nacht", "platform": "time", "entity_id": None}
+    env, c = n.context(t2)
+    assert n.w.render(env, b["conditions"][2], c) is False

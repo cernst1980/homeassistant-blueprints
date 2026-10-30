@@ -54,14 +54,19 @@ Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklic
 | ✅ **Gelüftet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still) | – |
 | 🪟 **Fenster schließen (n)** (alle Räume) | 90 s gesammelt nach dem ersten Raum; nachgeholt nach Ruhezeit, Heimkommen, Neustart | Anwesende | 10, 20, 40, 80 … Min. |
 | ✅ **… geschlossen** | geschlossene Räume verschwinden still aus der Liste | Anwesende (still) | – |
+| 🌙 **Gute Nacht – noch offen** | beim Schlafengehen (Schlafmodus an bzw. Ruhezeit-Beginn), ohne Räume mit erlaubter Nachtlüftung | wer schlafen geht (bzw. Anwesende) | – |
 | ⚠️ **Niemand zu Hause – Fenster offen** | beim Verlassen | alle | – |
-| 🌧/⛈ **Regen/Unwetter – Fenster offen** | wenn es zu regnen beginnt bzw. Unwetter/Sturm aufkommt (nicht bei jedem Wechsel rainy ↔ pouring) | Anwesende, sonst alle | – |
+| 🌧/⛈ **Regen/Unwetter – Fenster offen** | wenn es zu regnen beginnt bzw. Unwetter/Sturm aufkommt (nicht bei jedem Wechsel rainy ↔ pouring) | Regen: Wache; Unwetter: alle Anwesenden; ist niemand da: alle | – |
 | ⚠️ **Zone ohne Werte** | 30 Min. keine Innenwerte | alle | – |
 | 🔧 **Sensorbericht** | täglich (18 Uhr), nur wenn etwas auffällt | alle (still) | – |
 
 - **Niemand zu Hause:** keine Lüft- oder Schließ-Erinnerungen; die Abwesenheitswarnung nennt offene Fenster
   einmalig („sollte geschlossen werden“). Nach dem Heimkommen werden offene Punkte nachgeholt.
-- **Ruhezeit** (22–7 Uhr): keine Aufforderungen, außer „Schließen“-Hinweise sind ausdrücklich auch nachts erlaubt.
+- **Schlafmodus / Ruhezeit:** Wer schläft, bekommt keine Aufforderungen; schlafen alle Anwesenden, ist Ruhezeit.
+  „Schläft“ = Schlafmodus-Entität an (z. B. Fokus-Sensor des iPhones oder ein Helfer pro Person, den ein
+  Kurzbefehl beim Schlafen-Fokus schaltet) im Zeitfenster 20–11 Uhr. Gehört die Entität zu einem Handy, gilt sie
+  nur für dieses. Ohne Schlafmodus gilt eine feste Ruhezeit (22–7 Uhr). Beim Aufwachen bzw. Ruhezeit-Ende werden
+  offene Punkte nachgeholt. „Schließen“-Hinweise können ausdrücklich auch nachts erlaubt werden.
 - **Grundlüftung** meldet sich nie allein: Sie wird nur erwähnt, wenn ohnehin ein anderer Raum gelüftet werden
   muss („Bei der Gelegenheit auch: …“ – alles auf einmal); bei Regen/Unwetter entfällt sie.
   Optional: sofort oder als tägliche Sammelmeldung.

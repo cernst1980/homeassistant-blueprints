@@ -92,17 +92,51 @@ blueprint:
       default: 10
       selector:
         number: { min: 0, max: 60, step: 1, unit_of_measurement: min, mode: box }
+    schlaf_entitaeten:
+      name: Schlafmodus (optional)
+      description: >-
+        Entitäten, die „an“ sind, solange jemand schläft – z. B. der Fokus-Sensor der iPhones
+        (binary_sensor.<iphone>_focus) oder je Person ein Helfer, den ein Kurzbefehl beim Schlafen-Fokus
+        schaltet. Gehört die Entität zu einem Handy, gilt sie nur für dieses Handy, sonst für alle.
+        Wer schläft, bekommt keine Aufforderungen; schlafen alle Anwesenden, ist Ruhezeit.
+        Leer = feste Ruhezeit (unten).
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: [binary_sensor, input_boolean, switch]
+    schlaf_fenster_von:
+      name: Schlafmodus zählt ab
+      description: Ein Fokus tagsüber (z. B. Arbeiten) gilt nicht als Schlaf.
+      default: "20:00:00"
+      selector:
+        time:
+    schlaf_fenster_bis:
+      name: Schlafmodus zählt bis
+      default: "11:00:00"
+      selector:
+        time:
     ruhe_beginn:
-      name: Ruhezeit Beginn
+      name: Ruhezeit Beginn (ohne Schlafmodus)
+      description: Gute-Nacht-Check zu dieser Uhrzeit.
       default: "22:00:00"
       selector:
         time:
     ruhe_ende:
-      name: Ruhezeit Ende
+      name: Ruhezeit Ende (ohne Schlafmodus)
       description: Offene Lüft-Empfehlungen (auch Vorkühlen an Hitzetagen) werden dann nachgeholt.
       default: "07:00:00"
       selector:
         time:
+    gute_nacht:
+      name: Gute-Nacht-Check
+      description: >-
+        Beim Schlafengehen (Schlafmodus an bzw. Ruhezeit-Beginn) offene Fenster melden –
+        außer Räumen mit erlaubter Nachtlüftung (z. B. Schlafzimmer).
+      default: true
+      selector:
+        boolean:
     schliessen_nachts:
       name: „Schließen“-Hinweise auch in der Ruhezeit
       description: >-
@@ -195,6 +229,19 @@ triggers:
   - trigger: homeassistant
     event: start
     id: start
+  # Schlafmodus: an → Gute-Nacht-Check, aus → Offenes nachholen
+  - trigger: state
+    entity_id: !input schlaf_entitaeten
+    to: "on"
+    id: gute_nacht
+  - trigger: state
+    entity_id: !input schlaf_entitaeten
+    from: "on"
+    to: "off"
+    id: nachholen
+  - trigger: time
+    at: !input ruhe_beginn
+    id: gute_nacht
   - trigger: time_pattern
     minutes: "/5"
     id: erinnerung
@@ -324,6 +371,17 @@ variables:
   wind_max: !input wind_max
   wetter_in: !input wetter
   wetter: "{{ wetter_in if wetter_in is string else ((wetter_in | first) if wetter_in | length > 0 else '') }}"
+  schlaf_entitaeten: !input schlaf_entitaeten
+  schlaf_fenster_von: !input schlaf_fenster_von
+  schlaf_fenster_bis: !input schlaf_fenster_bis
+  gute_nacht: !input gute_nacht
+  # Ende eines Fokus tagsüber (z. B. Arbeiten) ist kein Aufwachen
+  nachholen_ok: >-
+    {%- if trigger is defined and trigger.id == 'nachholen' and trigger.platform == 'state' -%}
+      {%- set n = now().strftime('%H:%M:%S') -%}
+      {%- set v = schlaf_fenster_von -%}{%- set b = schlaf_fenster_bis -%}
+      {{- (n >= v or n < b) if v > b else (n >= v and n < b) -}}
+    {%- else -%}{{- true -}}{%- endif -%}
 
   # ---- Ziele (notify-Dienste) ----
   ziele_alle: >-
@@ -341,7 +399,32 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {{- ns.l -}}
-  ziele_bedarf: &ziele_bedarf "{{ ziele_da if nur_anwesende else ziele_alle }}"
+  # Wer schläft? Schlafmodus-Entität des Handys (oder ohne Handy-Bezug: alle) im Schlaf-Zeitfenster,
+  # ohne Schlafmodus die feste Ruhezeit.
+  schlafend: &schlafend >-
+    {%- set n = now().strftime('%H:%M:%S') -%}
+    {%- set ns = namespace(l=[]) -%}
+    {%- set se = schlaf_entitaeten if (schlaf_entitaeten is iterable and schlaf_entitaeten is not string) else [] -%}
+    {%- if se | length > 0 -%}
+      {%- set v = schlaf_fenster_von -%}{%- set b = schlaf_fenster_bis -%}
+      {%- set im_fenster = (n >= v or n < b) if v > b else (n >= v and n < b) -%}
+      {#- Entitäten ohne Handy-Bezug (z. B. Helfer) gelten für alle -#}
+      {%- set hn = namespace(e=[]) -%}
+      {%- for d in geraete -%}{%- set hn.e = hn.e + device_entities(d) -%}{%- endfor -%}
+      {%- set global_an = se | reject('in', hn.e) | select('is_state', 'on') | list | count > 0 -%}
+      {%- for d in geraete -%}
+        {%- set schlaeft = im_fenster and (global_an
+              or (se | select('in', device_entities(d)) | select('is_state', 'on') | list | count > 0)) -%}
+        {%- if schlaeft -%}{%- set ns.l = ns.l + ['notify.mobile_app_' ~ (device_attr(d, 'name') | slugify)] -%}{%- endif -%}
+      {%- endfor -%}
+    {%- else -%}
+      {%- set ruhe = (n >= ruhe_beginn or n < ruhe_ende) if ruhe_beginn > ruhe_ende
+            else ((n >= ruhe_beginn and n < ruhe_ende) if ruhe_beginn < ruhe_ende else false) -%}
+      {%- if ruhe -%}{%- set ns.l = ziele_alle -%}{%- endif -%}
+    {%- endif -%}
+    {{- ns.l -}}
+  ziele_wach: &ziele_wach "{{ ziele_da | reject('in', schlafend) | list }}"
+  ziele_bedarf: &ziele_bedarf "{{ ziele_wach if nur_anwesende else (ziele_alle | reject('in', schlafend) | list) }}"
   ziele_dringlich: "{{ ziele_da if ziele_da | length > 0 else ziele_alle }}"
   jemand_da: "{{ (states('zone.home') | int(0)) > 0 }}"
 
@@ -429,11 +512,16 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {{- ns.l -}}
-  ruhezeit: &ruhezeit >-
-    {%- set n = now().strftime('%H:%M:%S') -%}
-    {%- if ruhe_beginn > ruhe_ende -%}{{- n >= ruhe_beginn or n < ruhe_ende -}}
-    {%- elif ruhe_beginn < ruhe_ende -%}{{- n >= ruhe_beginn and n < ruhe_ende -}}
-    {%- else -%}{{- false -}}{%- endif -%}
+  # Ruhezeit = alle Anwesenden schlafen (bzw. feste Ruhezeit, wenn niemand zu Hause ist)
+  ruhezeit: &ruhezeit "{{ (ziele_da | length > 0 and ziele_wach | length == 0) or (ziele_da | length == 0 and schlafend | length > 0) }}"
+  # Offene Fenster für den Gute-Nacht-Check (ohne erlaubte Nachtlüftung)
+  offen_nachts: &offen_nachts >-
+    {%- set ns = namespace(l=[]) -%}
+    {%- for st in expand(sensoren) if st.state in ['offen', 'schliessen'] and not (st.attributes.nacht | default(false)) -%}
+      {%- set ns.l = ns.l + [(st.attributes.raum | default(st.name))
+            ~ (' (vermutlich offen, kein Kontakt)' if st.attributes.vermutet_offen | default(false) else '')] -%}
+    {%- endfor -%}
+    {{- ns.l -}}
 
 actions:
   # ---------- Fenster schließen: gesammelte Liste, zustandslos (übersteht Neustarts) ----------
@@ -463,10 +551,13 @@ actions:
             {%- endfor -%}
             {{- {'zeilen': ns.l, 'regen_relevant': ns.regen, 'erst': ns.erst, 'neuester': ns.neuester} -}}
           ziele_da: *ziele_da
+          schlafend: *schlafend
+          ziele_wach: *ziele_wach
           ruhezeit: *ruhezeit
+          empfaenger: "{{ ziele_da if schliessen_nachts else ziele_wach }}"
           senden: >-
             {%- set z = zu_schliessen -%}
-            {%- if z.zeilen | length == 0 or ziele_da | length == 0 or (ruhezeit and not schliessen_nachts) -%}{{- false -}}
+            {%- if z.zeilen | length == 0 or empfaenger | length == 0 or not nachholen_ok -%}{{- false -}}
             {%- elif trigger.id == 'schliessen' -%}{{- mein_ts >= z.neuester - 1 -}}
             {%- elif trigger.id == 'erinnerung' -%}
               {#- Erinnerung mit wachsendem Abstand ab dem ältesten Raum: 10, 20, 40, 80 … Min. -#}
@@ -486,7 +577,7 @@ actions:
                 {{ zu_schliessen.zeilen | join('\n') }}
                 {%- if unwetter or (regen and zu_schliessen.regen_relevant) %}{{ '\n' }}{{ '⛈ Unwetter' if unwetter else '🌧 Es regnet' }}{% endif %}
           - repeat:
-              for_each: "{{ ziele_da }}"
+              for_each: "{{ empfaenger }}"
               sequence:
                 - action: "{{ repeat.item }}"
                   continue_on_error: true
@@ -518,7 +609,7 @@ actions:
                    and trigger.from_state.state in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy',
                                                     'lightning', 'hail', 'exceptional']) }}
           - "{{ bedarf.liste | length > 0 }}"
-          - "{{ not ruhezeit }}"
+          - "{{ not ruhezeit and nachholen_ok }}"
           - "{{ ziele_bedarf | length > 0 }}"
           - "{{ not unwetter or bedarf.dringend }}"
           # Erreichen mehrere Räume in derselben Minute die Schwelle, meldet nur ein Lauf
@@ -587,6 +678,48 @@ actions:
                   title: "🪟 Grundlüftung fällig"
                   message: "{{ bedarf.mit | join(', ') }}"
 
+      # ---------- Gute-Nacht-Check: offene Fenster beim Schlafengehen ----------
+      - conditions:
+          - condition: trigger
+            id: gute_nacht
+          - "{{ gute_nacht }}"
+          # feste Uhrzeit nur ohne Schlafmodus; Schlafmodus nur im Schlaf-Zeitfenster
+          - >-
+            {%- set se = schlaf_entitaeten if (schlaf_entitaeten is iterable and schlaf_entitaeten is not string) else [] -%}
+            {%- if trigger.platform == 'time' -%}{{- se | length == 0 -}}
+            {%- else -%}
+              {%- set n = now().strftime('%H:%M:%S') -%}
+              {%- set v = schlaf_fenster_von -%}{%- set b = schlaf_fenster_bis -%}
+              {{- (n >= v or n < b) if v > b else (n >= v and n < b) -}}
+            {%- endif -%}
+          - "{{ offen_nachts | length > 0 and ziele_da | length > 0 }}"
+        sequence:
+          - variables:
+              # Schlafmodus eines Handys → nur an dieses Handy; sonst (Helfer ohne Handy, feste Zeit) an alle Anwesenden
+              empfaenger: >-
+                {%- set d = device_id(trigger.entity_id) if trigger.platform == 'state' else none -%}
+                {%- if d and d in geraete -%}{{- ['notify.mobile_app_' ~ (device_attr(d, 'name') | slugify)] -}}
+                {%- else -%}{{- ziele_da -}}{%- endif -%}
+          - repeat:
+              for_each: "{{ empfaenger }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "🌙 Gute Nacht – noch offen"
+                    message: "{{ offen_nachts | join('\n') }}"
+                    data:
+                      tag: lueftung_nacht
+                      push:
+                        interruption-level: time-sensitive
+          - if: "{{ web_ui }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: lueftung_nacht
+                  title: "🌙 Gute Nacht – noch offen"
+                  message: "{{ offen_nachts | join('\n') }}"
+
       # ---------- Abwesenheit: offene Fenster beim Verlassen ----------
       - conditions:
           - condition: trigger
@@ -633,8 +766,11 @@ actions:
           - variables:
               titel: "{{ '⛈ Unwetter – Fenster schließen' if unwetter else '🌧 Regen – Fenster offen' }}"
               text: "{{ offen_wetter | join('\n') }}"
+              # Unwetter weckt auf, Regen nur an Wache (ist niemand da: an alle)
+              empfaenger: >-
+                {{- ziele_dringlich if (unwetter or ziele_da | length == 0) else ziele_wach -}}
           - repeat:
-              for_each: "{{ ziele_dringlich }}"
+              for_each: "{{ empfaenger }}"
               sequence:
                 - action: "{{ repeat.item }}"
                   continue_on_error: true
@@ -777,6 +913,7 @@ actions:
                 {%- if von == 'schliessen' and rest | length == 0 and not geschlossen_ok -%}
                   {%- set t = t + ['lueftung_schliessen'] -%}{%- endif -%}
                 {%- if offen_alle | length == 0 -%}{%- set t = t + ['lueftung_wetter'] -%}{%- endif -%}
+                {%- if offen_nachts | length == 0 -%}{%- set t = t + ['lueftung_nacht'] -%}{%- endif -%}
                 {%- if not jemand_da and offene_fenster | length == 0 -%}{%- set t = t + ['lueftung_abwesend'] -%}{%- endif -%}
                 {#- „Jetzt lüften“: ohne Bestätigung sofort aufräumen; mit Bestätigung nur, wenn sich der Bedarf
                     ohne Lüften erledigt hat (sonst ersetzt die ✅-Nachricht sie nach ein paar Minuten) -#}
@@ -862,6 +999,8 @@ actions:
           # Lage nach der Wartezeit neu lesen
           - variables:
               ziele_da: *ziele_da
+              schlafend: *schlafend
+              ziele_wach: *ziele_wach
               ziele_bedarf: *ziele_bedarf
               wetter_zustand: *wetter_zustand
               unwetter: *unwetter
