@@ -188,3 +188,29 @@ def test_feuchte_geraet_lebt_kein_ausfall():
     for i in range(24):    # 4 h: nur die Temperatur meldet
         s, a = z.jump(10, sensor__t_in=21 + (i % 2) * 0.1, **AUSSEN_WINTER)
     assert s != "keine_daten" and a["veraltet"] == []
+
+
+def test_batterien_werden_automatisch_erkannt():
+    z = zone()
+    z.w.devices["thermo"] = ["sensor.t_in", "sensor.rh_in", "sensor.thermo_batterie", "sensor.thermo_rssi"]
+    z.w.set("sensor.thermo_batterie", 12, {"device_class": "battery"})
+    z.w.set("sensor.thermo_rssi", -80, {"device_class": "signal_strength"})
+    s, a = z.step(1, binary_sensor__win="off", sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    assert a["batterien"] == ["sensor.thermo_batterie"]
+
+
+def test_dringend_mit_hysterese():
+    z = zone(co2="sensor.co2")
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    z.step(2, binary_sensor__win="off", sensor__co2=900, **w)
+    folge = [z.step(1, binary_sensor__win="off", sensor__co2=c, **w)[0] for c in (1510, 1490, 1510, 1450, 1390)]
+    assert folge == ["dringend", "dringend", "dringend", "dringend", "lueften"]
+
+
+def test_nach_film_nicht_bei_heisser_feuchter_aussenluft():
+    z = zone(start=dt.datetime(2026, 7, 1, 20, 0), sperre=["media_player.atv"], sperre_zustaende=["playing"])
+    w = dict(sensor__t_out=31, sensor__rh_out=70, sensor__rh_in=50, sensor__t_in=24, binary_sensor__win="off")
+    z.step(2, media_player__atv="idle", **w)
+    z.step(60, media_player__atv="playing", **w)
+    s, a = z.step(10, media_player__atv="idle", **w)
+    assert "Nach Film" not in a["grund"]

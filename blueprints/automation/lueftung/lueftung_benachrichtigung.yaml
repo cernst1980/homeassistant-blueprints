@@ -146,7 +146,10 @@ blueprint:
       selector:
         time:
     batterien:
-      name: Batterien überwachen (optional)
+      name: Weitere Batterien überwachen (optional)
+      description: >-
+        Batterien der Geräte, deren Sensoren in den Zonen verwendet werden, werden automatisch erkannt.
+        Hier nur zusätzliche eintragen (z. B. Geräte ohne Zuordnung).
       default: []
       selector:
         entity:
@@ -180,15 +183,18 @@ triggers:
     entity_id: !input sensoren
     to: dringend
     id: bedarf
-  - trigger: time
-    at: !input ruhe_ende
-    id: bedarf
   - trigger: numeric_state
     entity_id: zone.home
     above: 0
     for:
       minutes: 5
-    id: bedarf
+    id: zurueck
+  - trigger: time
+    at: !input ruhe_ende
+    id: nachholen
+  - trigger: homeassistant
+    event: start
+    id: start
   - trigger: time_pattern
     minutes: "/5"
     id: erinnerung
@@ -210,6 +216,12 @@ triggers:
     entity_id: !input sensoren
     from: [lueften, dringend]
     to: schliessen
+    id: erledigt
+  # Zone fällt aus / wird neu geladen: offene Nachrichten aufräumen
+  - trigger: state
+    entity_id: !input sensoren
+    from: [lueften, dringend, schliessen]
+    to: [keine_daten, unavailable, unknown]
     id: erledigt
   - trigger: numeric_state
     entity_id: zone.home
@@ -284,13 +296,29 @@ variables:
       {%- if states(s) in ['keine_daten', 'unavailable', 'unknown'] -%}
         {%- set ns.l = ns.l + [raum ~ ': keine Empfehlung möglich (' ~ states(s) ~ ')'] -%}{%- endif -%}
     {%- endfor -%}
-    {%- for b in (batterien if batterien is iterable and batterien is not string else []) -%}
-      {%- set v = states(b) | float(-1) -%}
-      {%- if 0 <= v < (batterie_min | float(15)) -%}
-        {%- set ns.l = ns.l + ['🔋 ' ~ (state_attr(b, 'friendly_name') or b) ~ ': ' ~ (v | round(0) | int) ~ ' %'] -%}
-      {%- elif states(b) in ['unavailable', 'unknown'] -%}
-        {%- set ns.l = ns.l + ['🔋 ' ~ (state_attr(b, 'friendly_name') or b) ~ ': nicht verfügbar'] -%}
+    {#- Batterien: automatisch aus den Geräten der Zonen (Attribut „batterien“) plus manuelle Liste -#}
+    {%- set ns2 = namespace(b=(batterien if batterien is iterable and batterien is not string else []) | list) -%}
+    {%- for s in sensoren -%}
+      {%- set bl = state_attr(s, 'batterien') -%}
+      {%- if bl is iterable and bl is not string -%}{%- set ns2.b = ns2.b + (bl | list) -%}{%- endif -%}
+    {%- endfor -%}
+    {%- for b in ns2.b | unique -%}
+      {%- set name = state_attr(b, 'friendly_name') or b -%}
+      {%- if b.startswith('binary_sensor.') -%}
+        {%- if is_state(b, 'on') -%}{%- set ns.l = ns.l + ['🔋 ' ~ name ~ ': schwach'] -%}{%- endif -%}
+      {%- else -%}
+        {%- set v = states(b) | float(-1) -%}
+        {%- if 0 <= v < (batterie_min | float(15)) -%}
+          {%- set ns.l = ns.l + ['🔋 ' ~ name ~ ': ' ~ (v | round(0) | int) ~ ' %'] -%}
+        {%- elif is_state(b, 'unavailable') -%}
+          {%- set ns.l = ns.l + ['🔋 ' ~ name ~ ': nicht verfügbar'] -%}
+        {%- endif -%}
       {%- endif -%}
+    {%- endfor -%}
+    {#- Statussensor rechnet nicht mehr (Template-Fehler): er aktualisiert sich sonst jede Minute -#}
+    {%- for st in expand(sensoren) if st.state not in ['unavailable', 'unknown']
+          and as_timestamp(now()) - as_timestamp(st.last_updated, 0) > 600 -%}
+      {%- set ns.l = ns.l + ['⚠️ ' ~ (st.attributes.raum | default(st.name)) ~ ': Status seit über 10 Min. nicht aktualisiert (Template-Fehler? Protokoll prüfen)'] -%}
     {%- endfor -%}
     {{- ns.l -}}
   wind_max: !input wind_max
@@ -331,7 +359,11 @@ variables:
   # ---- Raumlisten ----
   bedarf: &bedarf >-
     {%- set ns = namespace(l=[], mit=[], dringend=false) -%}
-    {%- for s in sensoren if states(s) in ['lueften', 'dringend']
+    {#- „lüften“ zählt erst nach der Verzögerung (stabil), „dringend“ sofort -#}
+    {%- set stabil = expand(sensoren) | selectattr('state', 'eq', 'lueften')
+          | selectattr('last_changed', 'le', now() - timedelta(minutes=verzoegerung | int(0)))
+          | map(attribute='entity_id') | list -%}
+    {%- for s in sensoren if is_state(s, 'dringend') or s in stabil
           or (is_state(s, 'ok') and state_attr(s, 'grundlueftung_faellig') is true) -%}
       {%- set g = state_attr(s, 'grund') or '' -%}
       {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
@@ -354,16 +386,22 @@ variables:
     {%- if bedarf.liste | length + bedarf.mit | length > 1 %}{{ '\n' }}Tipp: Querlüften – Fenster gleichzeitig öffnen.{% endif %}
     {%- if wetter_hinweis %}{{ '\n' ~ wetter_hinweis }}{% endif %}
   erinnerung_faellig: >-
+    {#- Ab dem ältesten offenen Lüftbedarf mit wachsendem Abstand: 30, 60, 120 … Min. („dringend“ halb so lang) -#}
     {%- set iv = erinnerung_lueften | int(0) -%}
-    {%- set ns = namespace(f=false) -%}
-    {%- if iv > 0 -%}
-      {%- for st in expand(sensoren) if st.state in ['lueften', 'dringend'] -%}
-        {%- set i = [(iv / 2) if st.state == 'dringend' else iv, 5] | max -%}
-        {%- set m = (as_timestamp(now()) - as_timestamp(st.last_changed, 0)) / 60 -%}
-        {%- if m >= i and (m % i) < 5 -%}{%- set ns.f = true -%}{%- endif -%}
-      {%- endfor -%}
+    {%- set ns = namespace(erst=none, dringend=false) -%}
+    {%- for st in expand(sensoren) if st.state in ['lueften', 'dringend'] -%}
+      {%- set t = as_timestamp(st.last_changed, 0) + (0 if st.state == 'dringend' else (verzoegerung | int(0)) * 60) -%}
+      {%- set ns.erst = t if (ns.erst is none or t < ns.erst) else ns.erst -%}
+      {%- if st.state == 'dringend' -%}{%- set ns.dringend = true -%}{%- endif -%}
+    {%- endfor -%}
+    {%- if iv <= 0 or ns.erst is none -%}{{- false -}}
+    {%- else -%}
+      {%- set i = [(iv / 2) if ns.dringend else iv, 5] | max -%}
+      {%- set m = (as_timestamp(now()) - ns.erst) / 60 -%}
+      {%- set p = namespace(v=i) -%}
+      {%- for _ in range(12) if p.v * 2 <= m -%}{%- set p.v = p.v * 2 -%}{%- endfor -%}
+      {{- m >= i and (m - p.v) < 5 -}}
     {%- endif -%}
-    {{- ns.f -}}
   offen_wetter: >-
     {%- set ns = namespace(l=[]) -%}
     {%- for s in sensoren if states(s) in ['offen', 'schliessen'] and (unwetter or not state_attr(s, 'regengeschuetzt')) -%}
@@ -398,13 +436,82 @@ variables:
     {%- else -%}{{- false -}}{%- endif -%}
 
 actions:
+  # ---------- Fenster schließen: gesammelte Liste, zustandslos (übersteht Neustarts) ----------
+  # Gesendet wird beim Wechsel auf „schliessen“ (nach 90 s Sammeln, nur der neueste Lauf),
+  # als Erinnerung (10, 20, 40, 80 … Min.), nach der Ruhezeit, nach dem Heimkommen und nach einem Neustart.
+  # Nur an Anwesende – ist niemand zu Hause, deckt das die Abwesenheitswarnung ab.
+  - if:
+      - condition: trigger
+        id: [schliessen, erinnerung, nachholen, zurueck, start]
+    then:
+      - if: "{{ trigger.id == 'schliessen' }}"
+        then:
+          - variables:
+              mein_ts: "{{ as_timestamp(trigger.to_state.last_changed, 0) }}"
+          - delay:
+              seconds: 90
+      - variables:
+          zu_schliessen: &zu_schliessen >-
+            {%- set ns = namespace(l=[], regen=false, erst=none, neuester=0) -%}
+            {%- for st in expand(sensoren) if st.state == 'schliessen' -%}
+              {%- set ns.l = ns.l + [(st.attributes.raum | default(st.name)) ~ ': ' ~ (st.attributes.grund | default(''))
+                    ~ (' (vermutlich offen – kein Kontakt)' if st.attributes.vermutet_offen | default(false) else '')] -%}
+              {%- if not (st.attributes.regengeschuetzt | default(false)) -%}{%- set ns.regen = true -%}{%- endif -%}
+              {%- set t = as_timestamp(st.last_changed, 0) -%}
+              {%- set ns.erst = t if (ns.erst is none or t < ns.erst) else ns.erst -%}
+              {%- set ns.neuester = [ns.neuester, t] | max -%}
+            {%- endfor -%}
+            {{- {'zeilen': ns.l, 'regen_relevant': ns.regen, 'erst': ns.erst, 'neuester': ns.neuester} -}}
+          ziele_da: *ziele_da
+          ruhezeit: *ruhezeit
+          senden: >-
+            {%- set z = zu_schliessen -%}
+            {%- if z.zeilen | length == 0 or ziele_da | length == 0 or (ruhezeit and not schliessen_nachts) -%}{{- false -}}
+            {%- elif trigger.id == 'schliessen' -%}{{- mein_ts >= z.neuester - 1 -}}
+            {%- elif trigger.id == 'erinnerung' -%}
+              {#- Erinnerung mit wachsendem Abstand ab dem ältesten Raum: 10, 20, 40, 80 … Min. -#}
+              {%- set i = [erinnerung | int(0), 5] | max -%}
+              {%- set m = (as_timestamp(now()) - z.erst - 90) / 60 -%}
+              {%- set p = namespace(v=i) -%}
+              {%- for _ in range(12) if p.v * 2 <= m -%}{%- set p.v = p.v * 2 -%}{%- endfor -%}
+              {{- (erinnerung | int(0)) > 0 and m >= i and (m - p.v) < 5 -}}
+            {%- else -%}{{- true -}}{%- endif -%}
+      - if: "{{ senden }}"
+        then:
+          - variables:
+              titel: >-
+                {{- ('🪟 ' ~ (zu_schliessen.zeilen[0].split(':')[0]) ~ ': Fenster schließen') if zu_schliessen.zeilen | length == 1
+                    else ('🪟 Fenster schließen (' ~ zu_schliessen.zeilen | length ~ ')') -}}
+              text: >-
+                {{ zu_schliessen.zeilen | join('\n') }}
+                {%- if unwetter or (regen and zu_schliessen.regen_relevant) %}{{ '\n' }}{{ '⛈ Unwetter' if unwetter else '🌧 Es regnet' }}{% endif %}
+          - repeat:
+              for_each: "{{ ziele_da }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "{{ titel }}"
+                    message: "{{ text }}"
+                    data:
+                      tag: lueftung_schliessen
+                      push:
+                        interruption-level: time-sensitive
+          - if: "{{ web_ui }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: lueftung_schliessen
+                  title: "{{ titel }}"
+                  message: "{{ text }}"
+
   - choose:
       # ---------- Jetzt lüften (gebündelt, nur an Anwesende) ----------
       - conditions:
           - condition: trigger
-            id: [bedarf, erinnerung, wetter, grundlueftung_neu]
+            id: [bedarf, erinnerung, wetter, grundlueftung_neu, nachholen, zurueck, start]
           - >-
-            {{ trigger.id == 'bedarf'
+            {{ trigger.id in ['bedarf', 'nachholen', 'zurueck', 'start']
                or (trigger.id == 'grundlueftung_neu' and grundlueftung_meldung == 'sofort')
                or (trigger.id == 'erinnerung' and erinnerung_faellig)
                or (trigger.id == 'wetter' and not regen and not unwetter and trigger.from_state is not none
@@ -414,6 +521,19 @@ actions:
           - "{{ not ruhezeit }}"
           - "{{ ziele_bedarf | length > 0 }}"
           - "{{ not unwetter or bedarf.dringend }}"
+          # Erreichen mehrere Räume in derselben Minute die Schwelle, meldet nur ein Lauf
+          - >-
+            {%- if trigger.id != 'bedarf' -%}{{- true -}}
+            {%- else -%}
+              {%- set ns = namespace(k=[]) -%}
+              {%- for st in expand(sensoren) -%}
+                {%- set a = as_timestamp(now()) - as_timestamp(st.last_changed, 0) -%}
+                {%- if (st.state == 'dringend' and a < 60)
+                      or (st.state == 'lueften' and 0 <= a - (verzoegerung | int(0)) * 60 < 60) -%}
+                  {%- set ns.k = ns.k + [st.entity_id] -%}{%- endif -%}
+              {%- endfor -%}
+              {{- trigger.entity_id not in ns.k or trigger.entity_id == (ns.k | max) -}}
+            {%- endif -%}
         sequence:
           - variables:
               text: "{{ bedarf_text }}"
@@ -421,6 +541,7 @@ actions:
               for_each: "{{ ziele_bedarf }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "{{ '🪟 Erinnerung: lüften' if trigger.id == 'erinnerung' else '🪟 Jetzt lüften' }}"
                     message: "{{ text }}"
@@ -448,6 +569,7 @@ actions:
               for_each: "{{ ziele_bedarf }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "🪟 Grundlüftung fällig"
                     message: >-
@@ -465,96 +587,6 @@ actions:
                   title: "🪟 Grundlüftung fällig"
                   message: "{{ bedarf.mit | join(', ') }}"
 
-      # ---------- Fenster schließen (gesammelt, mit Erinnerung) ----------
-      # Kurz sammeln, dann EINE Nachricht für alle Räume. Kommt später ein weiterer Raum dazu,
-      # übernimmt dessen Lauf (neue Liste, eigene Erinnerung) und dieser hier endet.
-      - conditions:
-          - condition: trigger
-            id: schliessen
-        sequence:
-          - variables:
-              mein_ts: "{{ as_timestamp(trigger.to_state.last_changed, 0) }}"
-          - delay:
-              seconds: 90
-          - condition: template
-            value_template: &schliessen_aktuell >-
-              {%- set ns = namespace(offen=0, neuer=false) -%}
-              {%- for st in expand(sensoren) if st.state == 'schliessen' -%}
-                {%- set ns.offen = ns.offen + 1 -%}
-                {%- if as_timestamp(st.last_changed, 0) > mein_ts + 1 -%}{%- set ns.neuer = true -%}{%- endif -%}
-              {%- endfor -%}
-              {{- ns.offen > 0 and not ns.neuer -}}
-          - repeat:
-              sequence:
-                # In der Ruhezeit warten, bis sie endet oder alles zu ist
-                - wait_template: >-
-                    {%- set n = now().strftime('%H:%M:%S') -%}
-                    {%- if ruhe_beginn > ruhe_ende -%}{%- set ruhe = n >= ruhe_beginn or n < ruhe_ende -%}
-                    {%- elif ruhe_beginn < ruhe_ende -%}{%- set ruhe = n >= ruhe_beginn and n < ruhe_ende -%}
-                    {%- else -%}{%- set ruhe = false -%}{%- endif -%}
-                    {{- expand(sensoren) | selectattr('state', 'eq', 'schliessen') | list | count == 0
-                        or schliessen_nachts or not ruhe -}}
-                - variables:
-                    aktuell: *schliessen_aktuell
-                    liste: >-
-                      {%- set ns = namespace(l=[], regen=false) -%}
-                      {%- for st in expand(sensoren) if st.state == 'schliessen' -%}
-                        {%- set name = st.attributes.raum | default(st.name) -%}
-                        {%- set ns.l = ns.l + [name ~ ': ' ~ (st.attributes.grund | default(''))
-                              ~ (' (vermutlich offen – kein Kontakt)' if st.attributes.vermutet_offen | default(false) else '')] -%}
-                        {%- if not (st.attributes.regengeschuetzt | default(false)) -%}{%- set ns.regen = true -%}{%- endif -%}
-                      {%- endfor -%}
-                      {{- {'zeilen': ns.l, 'regen_relevant': ns.regen} -}}
-                    titel: >-
-                      {{- ('🪟 ' ~ (liste.zeilen[0].split(':')[0]) ~ ': Fenster schließen') if liste.zeilen | length == 1
-                          else ('🪟 Fenster schließen (' ~ liste.zeilen | length ~ ')') -}}
-                    text: >-
-                      {{ liste.zeilen | join('\n') }}
-                      {#- Wetter bei jeder Erinnerung neu lesen -#}
-                      {%- set wz = states(wetter) if wetter else '' -%}
-                      {%- set uw = wetter != '' and (wz in ['lightning', 'lightning-rainy', 'hail', 'exceptional']
-                            or (state_attr(wetter, 'wind_speed') | float(0)) >= wind_max) -%}
-                      {%- set rg = wz in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy'] -%}
-                      {%- if uw or (rg and liste.regen_relevant) %}{{ '\n' }}{{ '⛈ Unwetter' if uw else '🌧 Es regnet' }}{% endif %}
-                    # Anwesenheit bei jeder Erinnerung neu bestimmen
-                    empf: >-
-                      {%- set ns = namespace(l=[]) -%}
-                      {%- for d in geraete -%}
-                        {%- set tr = device_entities(d) | select('match', 'device_tracker[.]') | list -%}
-                        {%- if tr | length == 0 or is_state(tr[0], 'home') -%}
-                          {%- set ns.l = ns.l + ['notify.mobile_app_' ~ (device_attr(d, 'name') | slugify)] -%}
-                        {%- endif -%}
-                      {%- endfor -%}
-                      {{- ns.l if ns.l | length > 0 else ziele_alle -}}
-                - if: "{{ aktuell }}"
-                  then:
-                    - repeat:
-                        for_each: "{{ empf }}"
-                        sequence:
-                          - action: "{{ repeat.item }}"
-                            data:
-                              title: "{{ titel }}"
-                              message: "{{ text }}"
-                              data:
-                                tag: lueftung_schliessen
-                                push:
-                                  interruption-level: time-sensitive
-                    - if: "{{ web_ui }}"
-                      then:
-                        - action: persistent_notification.create
-                          data:
-                            notification_id: lueftung_schliessen
-                            title: "{{ titel }}"
-                            message: "{{ text }}"
-                - if: "{{ aktuell and (erinnerung | int) > 0 }}"
-                  then:
-                    - wait_template: "{{ not (expand(sensoren) | selectattr('state', 'eq', 'schliessen') | list | count > 0) }}"
-                      timeout: "{{ '%02d:%02d:00' % ((erinnerung | int) // 60, (erinnerung | int) % 60) }}"
-                      continue_on_timeout: true
-                - variables:
-                    aktuell: *schliessen_aktuell
-              until: "{{ (erinnerung | int) == 0 or not aktuell }}"
-
       # ---------- Abwesenheit: offene Fenster beim Verlassen ----------
       - conditions:
           - condition: trigger
@@ -565,6 +597,7 @@ actions:
               for_each: "{{ ziele_alle }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "⚠️ Niemand zu Hause – Fenster offen"
                     message: "{{ offene_fenster | join('\n') }}"
@@ -585,7 +618,16 @@ actions:
           - condition: trigger
             id: wetter
           - "{{ wetter != '' and (regen or unwetter) }}"
-          - "{{ trigger.from_state is not none and trigger.from_state.state != trigger.to_state.state }}"
+          # nur, wenn es schlechter wird (auch reiner Sturm ohne Zustandswechsel), nicht bei rainy ↔ pouring
+          - >-
+            {%- set f = trigger.from_state -%}
+            {%- if f is none -%}{{- false -}}
+            {%- else -%}
+              {%- set war_uw = f.state in ['lightning', 'lightning-rainy', 'hail', 'exceptional']
+                    or (f.attributes.wind_speed | default(0) | float(0)) >= wind_max -%}
+              {%- set war_regen = f.state in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy'] -%}
+              {{- (unwetter and not war_uw) or (regen and not war_regen and not war_uw) -}}
+            {%- endif -%}
           - "{{ offen_wetter | length > 0 }}"
         sequence:
           - variables:
@@ -595,6 +637,7 @@ actions:
               for_each: "{{ ziele_dringlich }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "{{ titel }}"
                     message: "{{ text }}"
@@ -623,6 +666,7 @@ actions:
               for_each: "{{ ziele_alle }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "{{ titel }}"
                     message: "{{ text }}"
@@ -650,6 +694,7 @@ actions:
               for_each: "{{ ziele_alle }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     message: clear_notification
                     data:
@@ -665,6 +710,7 @@ actions:
               for_each: "{{ ziele_alle }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     title: "🔧 Lüftung: Sensorbericht"
                     message: "{{ sensorbericht | join('\n') }}"
@@ -689,6 +735,7 @@ actions:
               for_each: "{{ ziele_alle }}"
               sequence:
                 - action: "{{ repeat.item }}"
+                  continue_on_error: true
                   data:
                     message: clear_notification
                     data:
@@ -713,12 +760,18 @@ actions:
                 {%- endfor -%}
                 {{- ns.l -}}
               # Wurde die „schließen“-Nachricht für diesen Raum (vermutlich) verschickt?
+              # Wurde die „schließen“-Nachricht (vermutlich) verschickt? Mind. 100 s in „schliessen“ und
+              # damals keine Ruhezeit (bzw. Hinweise auch nachts) – sonst kam sie nie an.
               schliessen_gemeldet: >-
-                {{- von == 'schliessen'
-                    and (as_timestamp(now()) - as_timestamp(trigger.from_state.last_changed, 0)) >= 100
-                    and (schliessen_nachts or not ruhezeit) -}}
+                {%- set t = as_timestamp(trigger.from_state.last_changed, 0) -%}
+                {%- set n = (t + 90) | timestamp_custom('%H:%M:%S') -%}
+                {%- if ruhe_beginn > ruhe_ende -%}{%- set ruhe_damals = n >= ruhe_beginn or n < ruhe_ende -%}
+                {%- elif ruhe_beginn < ruhe_ende -%}{%- set ruhe_damals = n >= ruhe_beginn and n < ruhe_ende -%}
+                {%- else -%}{%- set ruhe_damals = false -%}{%- endif -%}
+                {{- von == 'schliessen' and (as_timestamp(now()) - t) >= 100
+                    and (schliessen_nachts or not ruhe_damals or not ruhezeit) -}}
               # ✅ nur, wenn wirklich geschlossen (nicht: Fenster offen, aber kein Grund mehr zum Schließen)
-              geschlossen_ok: "{{ bestaetigung and schliessen_gemeldet and nach != 'offen' }}"
+              geschlossen_ok: "{{ bestaetigung and schliessen_gemeldet and nach in ['ok', 'lueften', 'dringend'] }}"
               tags: >-
                 {%- set t = [] -%}
                 {%- if von == 'schliessen' and rest | length == 0 and not geschlossen_ok -%}
@@ -728,7 +781,7 @@ actions:
                 {#- „Jetzt lüften“: ohne Bestätigung sofort aufräumen; mit Bestätigung nur, wenn sich der Bedarf
                     ohne Lüften erledigt hat (sonst ersetzt die ✅-Nachricht sie nach ein paar Minuten) -#}
                 {%- if von in ['lueften', 'dringend'] and bedarf.liste | length == 0
-                      and (not bestaetigung or nach == 'ok') -%}{%- set t = t + ['lueftung_bedarf'] -%}{%- endif -%}
+                      and (not bestaetigung or nach not in ['offen', 'schliessen']) -%}{%- set t = t + ['lueftung_bedarf'] -%}{%- endif -%}
                 {{- t -}}
           - repeat:
               for_each: "{{ tags }}"
@@ -742,6 +795,7 @@ actions:
                     for_each: "{{ ziele_alle }}"
                     sequence:
                       - action: "{{ repeat.item }}"
+                        continue_on_error: true
                         data:
                           message: clear_notification
                           data:
@@ -762,6 +816,7 @@ actions:
                     - if: "{{ repeat.item in ziele_dringlich }}"
                       then:
                         - action: "{{ repeat.item }}"
+                          continue_on_error: true
                           data:
                             title: "{{ titel }}"
                             message: "{{ text }}"
@@ -771,6 +826,7 @@ actions:
                                 interruption-level: passive
                       else:
                         - action: "{{ repeat.item }}"
+                          continue_on_error: true
                           data:
                             message: clear_notification
                             data:
@@ -862,6 +918,7 @@ actions:
                       for_each: "{{ ziele_alle }}"
                       sequence:
                         - action: "{{ repeat.item }}"
+                          continue_on_error: true
                           data:
                             message: clear_notification
                             data:
@@ -889,16 +946,27 @@ actions:
                       {%- if mit | length > 0 %}{{ '\n' }}Bei der Gelegenheit auch: {{ mit | join(', ') }} (Grundlüftung){% endif %}
                       {%- if noch | length > 0 and (regen or unwetter) %}{{ '\n' }}{{ '⛈ Unwetter' if unwetter else '🌧 Regen' }} – kurz stoßlüften.{% endif %}
                 - repeat:
-                    for_each: "{{ ziele_bedarf }}"
+                    for_each: "{{ ziele_alle }}"
                     sequence:
-                      - action: "{{ repeat.item }}"
-                        data:
-                          title: "{{ titel }}"
-                          message: "{{ text }}"
-                          data:
-                            tag: lueftung_bedarf
-                            push:
-                              interruption-level: passive
+                      - if: "{{ repeat.item in ziele_bedarf }}"
+                        then:
+                          - action: "{{ repeat.item }}"
+                            continue_on_error: true
+                            data:
+                              title: "{{ titel }}"
+                              message: "{{ text }}"
+                              data:
+                                tag: lueftung_bedarf
+                                push:
+                                  interruption-level: passive
+                        else:
+                          # wer inzwischen weg ist: alte Aufforderung entfernen
+                          - action: "{{ repeat.item }}"
+                            continue_on_error: true
+                            data:
+                              message: clear_notification
+                              data:
+                                tag: lueftung_bedarf
                 - if: "{{ web_ui and noch | length > 0 }}"
                   then:
                     - action: persistent_notification.create

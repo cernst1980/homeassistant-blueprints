@@ -484,23 +484,11 @@ actions:
       now_ts: "{{ as_timestamp(now()) | int }}"
       kontakt: "{{ e_win is string and e_win | length > 0 and states(e_win) not in ['unavailable', 'unknown'] }}"
       prev: "{{ states(selbst) if selbst else 'unknown' }}"
-      ts_t_in: >-
-        {%- set st = expand(e_t_in) | first if e_t_in else none -%}
-        {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
       ts_rh_in: >-
         {%- set st = expand(e_rh_in) | first if e_rh_in else none -%}
         {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
       ts_co2: >-
         {%- set st = expand(e_co2) | first if e_co2 else none -%}
-        {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
-      ts_t_out: >-
-        {%- set st = expand(e_t_out) | first if e_t_out else none -%}
-        {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
-      ts_rh_out: >-
-        {%- set st = expand(e_rh_out) | first if e_rh_out else none -%}
-        {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
-      ts_t_wand: >-
-        {%- set st = expand(e_t_wand) | first if e_t_wand else none -%}
         {{- (as_timestamp(st.last_reported | default(st.last_updated), 0) | int) if st else 0 -}}
 
   # Frische pro Sensor: letzte Meldung IRGENDEINER Entität desselben Geräts (bzw. der Gruppenmitglieder).
@@ -588,6 +576,24 @@ actions:
           {%- endif -%}
         {%- endfor -%}
         {{- ns.l -}}
+      # Batterien der beteiligten Geräte (für den Sensorbericht, ohne manuelle Liste)
+      batterien: >-
+        {%- set ns = namespace(q=[]) -%}
+        {%- for ent in [e_t_in, e_rh_in, e_co2, e_t_out, e_rh_out, e_t_wand, e_win] if ent -%}
+          {%- set basis = [ent] -%}
+          {%- for attr in ['entity_id', 'quellen'] -%}
+            {%- set m = state_attr(ent, attr) -%}
+            {%- if m is iterable and m is not string and m is not mapping -%}{%- set basis = basis + (m | list) -%}{%- endif -%}
+          {%- endfor -%}
+          {%- for c in basis -%}
+            {%- set d = device_id(c) -%}
+            {%- if d -%}
+              {%- set ns.q = ns.q + (device_entities(d) | select('match', '(binary_)?sensor[.]')
+                    | select('is_state_attr', 'device_class', 'battery') | list) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {{- ns.q | unique | list -}}
       einschraenkungen: >-
         {%- set l = [] -%}
         {%- if e_co2 and co2 is not number -%}{%- set l = l + ['CO₂-Bewertung'] -%}{%- endif -%}
@@ -771,7 +777,7 @@ actions:
         {%- set e = as_timestamp(today_at(nacht_ende | string)) | int -%}
         {{- e if e <= now_ts else e - 86400 -}}
       nachtlueftung_beendet: >-
-        {{- modus == 'nachts' and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts -}}
+        {{- modus == 'nachts' and not nacht and win_open and offen_seit is number and offen_seit < nacht_ende_ts - 3600 -}}
       dauer: >-
         {%- set df = dauer_fenster if (dauer_fenster is iterable and dauer_fenster is not string) else ([dauer_fenster] if dauer_fenster else []) -%}
         {%- set dw = dauer_fenster_warm if (dauer_fenster_warm is iterable and dauer_fenster_warm is not string) else ([dauer_fenster_warm] if dauer_fenster_warm else []) -%}
@@ -831,12 +837,13 @@ actions:
         {%- set kuehl_ab = hitze_vorkuehlen_ab if hitzetag else kuehlen_ab -%}
         {#- Eigener Kühl-Sensor (z. B. Wintergarten) zählt nur, wenn auch die Zone warm ist –
             sonst ist die Sonnenwärme willkommen (Heizsaison) -#}
+        {%- set kh = 0.5 if hyst else 0 -%}
         {%- set kuehlen = kuehlen_aktiv and t_kuehl is number and t_in is number and t_out is number
-              and t_kuehl >= kuehl_ab and t_in >= kuehl_ab - (2 if e_t_kuehl else 0) and t_out <= t_in - 2
+              and t_kuehl >= kuehl_ab - kh and t_in >= kuehl_ab - (2 if e_t_kuehl else 0) - kh and t_out <= t_in - 2 + kh
               and (ah_diff is not number or ah_diff > 0 - ah_min_diff) -%}
         {%- if not win_open -%}
           {%- if co2 is number -%}
-            {%- if co2 >= co2_dringend -%}
+            {%- if co2 >= co2_dringend - (100 if prev == 'dringend' else 0) -%}
               {%- set ns.dringend = true -%}
               {%- set ns.gruende = ns.gruende + ['CO₂ ' ~ (co2 | int) ~ ' ppm'] -%}
             {%- elif co2 >= co2_lueften - (150 if hyst else 0) and not blockiert -%}
@@ -846,7 +853,7 @@ actions:
           {%- if trocken and rf_wand is number -%}
             {%- set info = ' (außen ' ~ (ah_diff | round(1)) ~ ' g/m³ trockener)' -%}
             {%- set fh = ' · ' ~ (schimmel_h | round(0) | int) ~ ' Feuchtestunden' -%}
-            {%- if rf_wand >= rf_dringend and schimmel_h >= risiko_dringend_h -%}
+            {%- if rf_wand >= rf_dringend - (2 if prev == 'dringend' else 0) and schimmel_h >= risiko_dringend_h -%}
               {%- set ns.dringend = true -%}
               {%- set ns.gruende = ns.gruende + ['Schimmelrisiko, Wand ' ~ rf_wand ~ ' % rF' ~ fh ~ info] -%}
             {%- elif schimmel_h >= risiko_hoch_h and rf_wand >= rf_lueften - 10 -%}
@@ -857,7 +864,7 @@ actions:
               {%- set ns.gruende = ns.gruende + ['Feuchte, Wand ' ~ rf_wand ~ ' % rF' ~ info] -%}
             {%- endif -%}
           {%- endif -%}
-          {%- if trocken and rf_anstieg >= dusch_anstieg -%}
+          {%- if trocken and rf_anstieg >= dusch_anstieg - (3 if prev == 'dringend' else 0) -%}
             {%- set ns.dringend = true -%}
             {%- set ns.gruende = ns.gruende + ['Feuchtespitze +' ~ rf_anstieg ~ ' % rF'] -%}
           {%- endif -%}
@@ -878,7 +885,7 @@ actions:
           {%- elif aktiv_nachlauf -%}
             {%- set ns.gruende = ns.gruende + ['Nachlüften nach ' ~ aktivitaet_name] -%}
           {%- endif -%}
-          {%- if nach_sperre -%}
+          {%- if nach_sperre and not blockiert and (t_in is not number or t_out is not number or t_out <= t_in) -%}
             {%- set ns.gruende = ns.gruende + ['Nach ' ~ sperre_name ~ ' lüften'] -%}
           {%- endif -%}
           {%- set rest = ((cooldown | int) * 60 - (now_ts - geschlossen_seit)) if geschlossen_seit is number else 0 -%}
@@ -1015,6 +1022,7 @@ sensor:
     grund: "{{ ('Keine Innenwerte – ' ~ (sensorprobleme | join(', ') or 'Sensoren prüfen')) if keine_daten else ergebnis.grund }}"
     sensorprobleme: "{{ sensorprobleme }}"
     einschraenkungen: "{{ [] if keine_daten else einschraenkungen }}"
+    batterien: "{{ batterien }}"
     fenster_quelle: "{{ 'kontakt' if kontakt else 'geschaetzt' }}"
     vermutet_offen: "{{ (not kontakt) and win_open }}"
     veraltet: "{{ veraltet }}"

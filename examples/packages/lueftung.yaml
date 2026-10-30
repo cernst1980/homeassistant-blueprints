@@ -61,13 +61,18 @@ template:
         device_class: temperature
         unit_of_measurement: "°C"
         state_class: measurement
+        # ausgefallen = kein Zahlenwert oder Gerät seit 60 Min. stumm
         state: >-
+          {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
           {%- set v = states('sensor.aussen_temperatur') -%}
-          {{ v | float if is_number(v) else state_attr('weather.forecast_home', 'temperature') }}
+          {{ v | float if (is_number(v) and frisch) else state_attr('weather.forecast_home', 'temperature') }}
         availability: >-
-          {{ is_number(states('sensor.aussen_temperatur')) or is_number(state_attr('weather.forecast_home', 'temperature')) }}
+          {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
+          {{ (is_number(states('sensor.aussen_temperatur')) and frisch) or is_number(state_attr('weather.forecast_home', 'temperature')) }}
         attributes:
-          quelle: "{{ 'Sensor' if is_number(states('sensor.aussen_temperatur')) else 'Wetterdienst' }}"
+          quelle: >-
+            {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
+            {{ 'Sensor' if (is_number(states('sensor.aussen_temperatur')) and frisch) else 'Wetterdienst' }}
           quellen: "{{ ['sensor.aussen_temperatur'] }}"
       - name: Lüftung Außen Luftfeuchtigkeit
         unique_id: lueftung_aussen_luftfeuchtigkeit
@@ -75,13 +80,18 @@ template:
         device_class: humidity
         unit_of_measurement: "%"
         state_class: measurement
+        # ausgefallen = kein Zahlenwert oder Gerät seit 60 Min. stumm
         state: >-
+          {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
           {%- set v = states('sensor.aussen_luftfeuchtigkeit') -%}
-          {{ v | float if is_number(v) else state_attr('weather.forecast_home', 'humidity') }}
+          {{ v | float if (is_number(v) and frisch) else state_attr('weather.forecast_home', 'humidity') }}
         availability: >-
-          {{ is_number(states('sensor.aussen_luftfeuchtigkeit')) or is_number(state_attr('weather.forecast_home', 'humidity')) }}
+          {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
+          {{ (is_number(states('sensor.aussen_luftfeuchtigkeit')) and frisch) or is_number(state_attr('weather.forecast_home', 'humidity')) }}
         attributes:
-          quelle: "{{ 'Sensor' if is_number(states('sensor.aussen_luftfeuchtigkeit')) else 'Wetterdienst' }}"
+          quelle: >-
+            {%- set t = states.sensor.aussen_temperatur -%}{%- set h = states.sensor.aussen_luftfeuchtigkeit -%}{%- set frisch = as_timestamp(now()) - ([as_timestamp(t.last_reported, 0) if t else 0, as_timestamp(h.last_reported, 0) if h else 0] | max) < 3600 -%}
+            {{ 'Sensor' if (is_number(states('sensor.aussen_luftfeuchtigkeit')) and frisch) else 'Wetterdienst' }}
           quellen: "{{ ['sensor.aussen_luftfeuchtigkeit'] }}"
 
   # ---------- Übersicht mit Historie ----------
@@ -191,6 +201,21 @@ template:
   #       sperre: [media_player.beamer]
   #       sperre_zustaende: ["on", "playing", "paused"]
   #       sperre_name: Film
+
+  # Arbeitszimmer mit CO₂-Sensor (5-Min.-Intervall), 3D-Drucker und Dauerlüften bei warmem Wetter
+  # - use_blueprint:
+  #     path: lueftung/lueftungsstatus_raum.yaml
+  #     input:
+  #       raum: Büro
+  #       ...
+  #       co2: sensor.buero_co2
+  #       messintervall: 5
+  #       aktivitaet: [sensor.drucker_status]
+  #       aktiv_zustaende: ["running", "printing"]
+  #       aktivitaet_name: 3D-Druck
+  #       dauerlueften: "immer"
+  #       dauer_ab_aussen: 16          # darunter normale Stoßlüft-Regeln
+  #       nacht_min_temp: 19           # „Raum zu kalt“ beim Dauerlüften
 
   # Keller: erdberührte Wände ≈ Raumtemperatur, kein Kühlen, strenger Sommer-Block
   # - use_blueprint:

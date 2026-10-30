@@ -4,7 +4,7 @@ Zwei Blueprints, die zusammenarbeiten:
 
 | Datei | Typ | Zweck |
 |---|---|---|
-| [`blueprints/template/lueftung/lueftungsstatus_raum.yaml`](../blueprints/template/lueftung/lueftungsstatus_raum.yaml) | Template | Ein Status-Sensor pro Lüftungszone: `ok` / `lueften` / `dringend` / `offen` / `schliessen` |
+| [`blueprints/template/lueftung/lueftungsstatus_raum.yaml`](../blueprints/template/lueftung/lueftungsstatus_raum.yaml) | Template | Ein Status-Sensor pro Lüftungszone: `ok` / `lueften` / `dringend` / `offen` / `schliessen` / `keine_daten` |
 | [`blueprints/automation/lueftung/lueftung_benachrichtigung.yaml`](../blueprints/automation/lueftung/lueftung_benachrichtigung.yaml) | Automation | Zentrale Benachrichtigung für alle Zonen |
 | [`examples/packages/lueftung.yaml`](../examples/packages/lueftung.yaml) | Beispiel | Package mit Zonen, Mittelwerten, Übersicht, Vorhersage-Sensor |
 
@@ -46,19 +46,27 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 
 ## Benachrichtigungen
 
-- „Jetzt lüften“ gebündelt, nur an Geräte zu Hause, Ruhezeit, Querlüften-Tipp, Regen-/Unwetter-Hinweis
-- „Fenster schließen“ gesammelt (alle Räume in einer Nachricht, kurz gesammelt) mit Erinnerung; in der Ruhezeit erst morgens (z. B. gekipptes Schlafzimmerfenster); geschlossene Räume verschwinden still aus der Liste, zuletzt „✅ … geschlossen“
-- Offene Empfehlungen werden nach der Ruhezeit und nach dem Heimkommen nachgeholt
-- Erinnerung bei Nichtbeachtung („lüften“ alle 30 Min., „dringend“ alle 15 Min.)
-- Warnung bei offenen Fenstern beim Verlassen des Hauses und bei Regen/Unwetter
-  (Zonen mit `regengeschuetzt: true`, z. B. unter Vordach, nur bei Unwetter)
-- Reine Grundlüftung (kein Messwert spricht fürs Lüften) meldet sich nicht allein: Sie wird nur erwähnt,
-  wenn ohnehin ein anderer Raum gelüftet werden muss („Bei der Gelegenheit auch: …“ – alles auf einmal);
-  bei Regen/Unwetter entfällt sie. Optional: sofort oder als tägliche Sammelmeldung
-- Erledigt-Bestätigung: Einige Minuten nach dem letzten geöffneten Fenster kommt eine stille Nachricht
-  („✅ Büro, WC, Heimkino“), vergessene Räume werden darin genannt; beim Schließen wird die Liste still
-  aktualisiert, zuletzt „✅ … geschlossen“
-- Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt
+Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklich etwas zu tun ist.
+
+| Nachricht | Wann | An wen | Erinnerung |
+|---|---|---|---|
+| 🪟 **Jetzt lüften** (alle Räume in einer Nachricht) | Raum 10 Min. stabil „lüften“, „dringend“ sofort; nachgeholt nach Ruhezeit, Heimkommen und Regenende | Anwesende | 30, 60, 120 … Min. („dringend“: 15, 30, 60 …) |
+| ✅ **Gelüftet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still) | – |
+| 🪟 **Fenster schließen (n)** (alle Räume) | 90 s gesammelt nach dem ersten Raum; nachgeholt nach Ruhezeit, Heimkommen, Neustart | Anwesende | 10, 20, 40, 80 … Min. |
+| ✅ **… geschlossen** | geschlossene Räume verschwinden still aus der Liste | Anwesende (still) | – |
+| ⚠️ **Niemand zu Hause – Fenster offen** | beim Verlassen | alle | – |
+| 🌧/⛈ **Regen/Unwetter – Fenster offen** | wenn es zu regnen beginnt bzw. Unwetter/Sturm aufkommt (nicht bei jedem Wechsel rainy ↔ pouring) | Anwesende, sonst alle | – |
+| ⚠️ **Zone ohne Werte** | 30 Min. keine Innenwerte | alle | – |
+| 🔧 **Sensorbericht** | täglich (18 Uhr), nur wenn etwas auffällt | alle (still) | – |
+
+- **Niemand zu Hause:** keine Lüft- oder Schließ-Erinnerungen; die Abwesenheitswarnung nennt offene Fenster
+  einmalig („sollte geschlossen werden“). Nach dem Heimkommen werden offene Punkte nachgeholt.
+- **Ruhezeit** (22–7 Uhr): keine Aufforderungen, außer „Schließen“-Hinweise sind ausdrücklich auch nachts erlaubt.
+- **Grundlüftung** meldet sich nie allein: Sie wird nur erwähnt, wenn ohnehin ein anderer Raum gelüftet werden
+  muss („Bei der Gelegenheit auch: …“ – alles auf einmal); bei Regen/Unwetter entfällt sie.
+  Optional: sofort oder als tägliche Sammelmeldung.
+- Erinnerungen werden zustandslos berechnet (alle 5 Min. geprüft) und überstehen Neustarts.
+- Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt bzw. still ersetzt.
 
 ## Installation
 
@@ -77,15 +85,24 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
    ```
 5. Automation aus dem Blueprint anlegen.
 
-## Sensorausfälle
+## Sensorausfälle und Batterien
 
 - Jede Bewertung läuft, solange ihre Werte da sind (CO₂ allein, Feuchte/Schimmel mit Innen- und Außenwerten,
   Grundlüftung mit dem Fenster). Fehlende Teile stehen im Attribut `einschraenkungen`.
+- **Frische pro Gerät:** BLE-/Zigbee-Sensoren melden oft nur bei Änderung. Ein Wert gilt als frisch, solange
+  irgendeine Entität desselben Geräts meldet; erst nach `max_alter` (Standard 180 Min.) Stille gilt er als veraltet.
 - Gruppen-Mittelwerte rechnen mit den verbleibenden Sensoren weiter.
 - Fensterkontakt nicht verfügbar → Öffnen wird aus den Messwerten geschätzt.
-- Außenwerte optional mit Rückfall auf den Wetterdienst (siehe Beispiel-Package).
-- Status `keine_daten`, wenn eine Zone keinen Innenwert mehr hat → sofortige Meldung nach 30 Min.
-- Täglicher Sensorbericht: ausgefallene Einzel- und Gruppensensoren, Einschränkungen, schwache Batterien.
+- Außenwerte mit Rückfall auf den Wetterdienst – auch, wenn der Außensensor zwar einen Wert hat, aber
+  seit 60 Min. nicht mehr meldet (siehe Beispiel-Package).
+- Status `keine_daten`, wenn eine Zone keinen Innenwert mehr hat → Meldung nach 30 Min.; offene Lüft-/Schließ-
+  Nachrichten der Zone werden entfernt.
+- **Batterien** der verwendeten Geräte werden automatisch erkannt (Attribut `batterien`, Sensoren mit
+  `device_class: battery` bzw. Low-Battery-Binärsensoren). Schwache (< 15 %) oder nicht verfügbare Batterien
+  stehen im täglichen Sensorbericht.
+- Der Sensorbericht meldet außerdem ausgefallene Einzel- und Gruppensensoren, eingeschränkte Bewertungen und
+  Status-Sensoren, die nicht mehr rechnen (Template-Fehler).
+- Fällt ein Handy weg (umbenannt, App gelöscht), laufen die Benachrichtigungen an die anderen weiter.
 
 ## Hinweise
 
@@ -98,14 +115,17 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - Die Zonen-Sensoren schreiben jede Minute neue Attribute → per `recorder: exclude` ausschließen
   (siehe Beispiel-Package) und für die Historie den Übersichtssensor nutzen.
 - Raumnamen (`raum`) müssen eindeutig sein.
+- `dauer_fenster` (z. B. Küchenfenster beim Kochen) erkennt das Kochen selbst nicht: Jede Öffnung dieses
+  Fensters darf bis `dauer_max_min` offen bleiben.
 
 Getestet mit Home Assistant 2026.9.
-
-[← Zurück zur Übersicht](../README.md)
 
 ## Tests
 
 `tests/lueftung` spielt typische Abläufe mit einem kleinen HA-Nachbau durch (`ha_sim.py`):
 CO₂-Lüften und Plateau, Maximaldauer, Grundlüftung, Dauerlüften, Küche/Terrasse, Wintergarten,
-Sperre, 3D-Druck, Sensorausfälle sowie Raumlisten und Bestätigungen der Benachrichtigung.
+Sperre, 3D-Druck, Hysterese, Sensorausfälle, Batterien sowie Raumlisten, Erinnerungsabstände,
+Wetterwarnungen und Bestätigungen der Benachrichtigung.
 Sie laufen bei jedem Push automatisch (`python3 -m pytest tests -q`).
+
+[← Zurück zur Übersicht](../README.md)

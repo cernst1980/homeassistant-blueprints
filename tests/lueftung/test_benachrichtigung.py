@@ -154,30 +154,131 @@ def test_erledigt_tags_und_schliessen_liste():
     assert tags == ["lueftung_schliessen"] and text is None
 
 
-def test_schliessen_gesammelt():
-    w = welt()
+def _schliessen(n, tid, mein_ts=None):
+    """Oberer Block „Fenster schließen“: (senden?, titel, text)."""
+    blk = n.close_block()["then"]
+    t = {"id": tid, "entity_id": "sensor.wc"}
+    env, c = n.context(t)
+    if mein_ts is not None:
+        c["mein_ts"] = mein_ts
+    n.variables(blk[1], env, c)
+    if c["senden"] is not True:
+        return False, None, None
+    n.variables(blk[2]["then"][0], env, c)
+    return True, c["titel"], c["text"]
+
+
+def _zwei_offen(w):
     zone(w, "sensor.buero", "schliessen", "Luft ist ausgetauscht", 2)
     zone(w, "sensor.wc", "schliessen", "seit 10 Min. offen", 1)
     zone(w, "sensor.kino", "ok")
     zone(w, "sensor.bad", "ok", regengeschuetzt=True)
+
+
+def test_schliessen_gesammelt():
+    w = welt()
+    _zwei_offen(w)
     w.set("weather.home", "rainy")
     n = Notify(w, SENSOREN)
-    b = n.branch("schliessen")
-    seq = b["sequence"]
-
-    def lauf(entity, minuten):
-        t = trigger(entity, "offen", "schliessen", tid="schliessen")
-        env, c = n.context(t)
-        c["mein_ts"] = w.now - minuten * 60
-        aktiv = n.w.render(env, seq[2]["value_template"], c)
-        if aktiv is not True:
-            return None
-        inner = seq[3]["repeat"]["sequence"]
-        n.variables(inner[1], env, c)
-        return c["titel"], c["text"]
-
-    assert lauf("sensor.buero", 2) is None            # neuerer Raum übernimmt
-    titel, text = lauf("sensor.wc", 1)
-    assert titel == "🪟 Fenster schließen (2)"
+    assert _schliessen(n, "schliessen", mein_ts=ts(w, 2))[0] is False     # neuerer Raum übernimmt
+    ok, titel, text = _schliessen(n, "schliessen", mein_ts=ts(w, 1))
+    assert ok and titel == "🪟 Fenster schließen (2)"
     assert text.splitlines()[:2] == ["BUERO: Luft ist ausgetauscht", "WC: seit 10 Min. offen"]
     assert "🌧 Es regnet" in text
+
+
+def test_schliessen_erinnerung_wachsender_abstand():
+    w = welt()
+    gesendet = []
+    for minute in range(0, 200, 5):
+        w.now = int(NOW.timestamp()) + minute * 60
+        zone(w, "sensor.buero", "schliessen", "seit X Min. offen", 0)
+        w.states["sensor.buero"]["lc"] = int(NOW.timestamp()) - 90
+        for e in ("sensor.wc", "sensor.kino", "sensor.bad"):
+            zone(w, e, "ok")
+        if _schliessen(Notify(w, SENSOREN), "erinnerung")[0]:
+            gesendet.append(minute)
+    assert gesendet == [10, 20, 40, 80, 160]
+
+
+def test_schliessen_nicht_wenn_niemand_da_oder_ruhezeit():
+    w = welt()
+    _zwei_offen(w)
+    w.devices["handy"] = ["device_tracker.handy"]
+    w.set("device_tracker.handy", "not_home")
+    assert _schliessen(Notify(w, SENSOREN), "zurueck")[0] is False
+    w.set("device_tracker.handy", "home")
+    assert _schliessen(Notify(w, SENSOREN), "zurueck")[0] is True
+    w.now = int(dt.datetime(2026, 10, 11, 23, 0).timestamp())
+    _zwei_offen(w)
+    assert _schliessen(Notify(w, SENSOREN), "start")[0] is False
+    assert _schliessen(Notify(w, SENSOREN, schliessen_nachts=True), "start")[0] is True
+
+
+def test_lueften_erinnerung_wachsender_abstand():
+    w = welt()
+    for e in ("sensor.wc", "sensor.kino", "sensor.bad"):
+        zone(w, e, "ok")
+    start = int(NOW.timestamp())
+    gesendet = []
+    for minute in range(0, 300, 5):
+        w.now = start + minute * 60
+        zone(w, "sensor.buero", "lueften", "CO₂ 1300 ppm", 0)
+        w.states["sensor.buero"]["lc"] = start - 10 * 60     # seit 10 Min. lueften = gemeldet bei 0
+        _, c = Notify(w, SENSOREN).context()
+        if c["erinnerung_faellig"] is True:
+            gesendet.append(minute)
+    assert gesendet == [30, 60, 120, 240]
+
+
+def test_wetter_nur_wenn_es_schlechter_wird():
+    w = welt()
+    zone(w, "sensor.buero", "offen")
+    for e in ("sensor.wc", "sensor.kino", "sensor.bad"):
+        zone(w, e, "ok")
+    b = None
+    for x in Notify(w, SENSOREN).choose():
+        if x["conditions"][0].get("id") == "wetter" and "offen_wetter" in str(x["conditions"]):
+            b = x
+    assert b is not None
+
+    def feuert(von, nach, wind_von=0, wind_nach=0):
+        w.set("weather.home", nach, {"wind_speed": wind_nach})
+        n = Notify(w, SENSOREN)
+        t = trigger("weather.home", von, nach, from_attrs={"wind_speed": wind_von},
+                    to_attrs={"wind_speed": wind_nach}, tid="wetter")
+        env, c = n.context(t)
+        return all(n.w.render(env, cond, c) is True for cond in b["conditions"][1:])
+
+    assert feuert("cloudy", "rainy")
+    assert not feuert("rainy", "pouring")
+    assert feuert("cloudy", "cloudy", 10, 60)          # reiner Sturm
+    assert not feuert("cloudy", "cloudy", 60, 65)
+
+
+def test_lueften_nur_stabile_raeume_und_kein_doppelversand():
+    w = welt()
+    zone(w, "sensor.buero", "lueften", "CO₂ 1300 ppm", 10)
+    zone(w, "sensor.wc", "lueften", "Feuchte", 10)
+    zone(w, "sensor.kino", "lueften", "Feuchte", 3)          # noch nicht stabil
+    zone(w, "sensor.bad", "ok")
+    n = Notify(w, SENSOREN)
+    _, c = n.context()
+    assert c["bedarf"]["liste"] == ["BUERO: CO₂ 1300 ppm", "WC: Feuchte"]
+    b = n.branch("bedarf")
+
+    def sendet(entity):
+        t = trigger(entity, "ok", "lueften", tid="bedarf")
+        env, c = n.context(t)
+        return all(n.w.render(env, cond, c) is True for cond in b["conditions"][1:])
+
+    assert [sendet("sensor.buero"), sendet("sensor.wc")] == [False, True]
+
+def test_sensorbericht_meldet_schwache_batterie():
+    w = welt()
+    for e in SENSOREN:
+        zone(w, e, "ok", batterien=[])
+    zone(w, "sensor.bad", "ok", batterien=["sensor.bad_batterie"])
+    w.set("sensor.bad_batterie", 9, {"friendly_name": "Bad Thermometer Batterie", "device_class": "battery"})
+    _, c = Notify(w, SENSOREN).context()
+    assert "🔋 Bad Thermometer Batterie: 9 %" in c["sensorbericht"]

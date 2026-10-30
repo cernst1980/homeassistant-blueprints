@@ -90,8 +90,10 @@ class World:
         o.last_updated = o.last_reported = dt.datetime.fromtimestamp(d["lu"])
         return o
 
-    # ---- Jinja-Umgebung ----
+    # ---- Jinja-Umgebung (einmal pro Welt, Templates werden zwischengespeichert) ----
     def env(self):
+        if getattr(self, "_env", None) is not None:
+            return self._env
         env = jinja2.Environment(extensions=["jinja2.ext.loopcontrols"])
         w = self
 
@@ -117,7 +119,10 @@ class World:
                 return default
 
         env.tests["is_state"] = is_state
+        env.tests["is_state_attr"] = lambda e, k, v: state_attr(e, k) == v
         env.tests["match"] = lambda v, p: re.match(p, v) is not None
+        env.filters["timestamp_custom"] = lambda ts, fmt="%Y-%m-%d %H:%M:%S", local=True: \
+            dt.datetime.fromtimestamp(float(ts)).strftime(fmt)
         env.filters["slugify"] = lambda x: re.sub(r"[^a-z0-9]+", "_", str(x).lower()).strip("_")
         env.globals.update(
             states=states, state_attr=state_attr, is_state=is_state, expand=expand,
@@ -127,12 +132,17 @@ class World:
             today_at=lambda t: dt.datetime.combine(dt.datetime.fromtimestamp(w.now).date(),
                                                    dt.time.fromisoformat(str(t))),
             as_timestamp=as_timestamp,
-            now=lambda: dt.datetime.fromtimestamp(w.now), e=math.e, none=None)
+            now=lambda: dt.datetime.fromtimestamp(w.now), timedelta=dt.timedelta, e=math.e, none=None)
+        self._env = env
+        self._cache = {}
         return env
 
     def render(self, env, tpl, ctx):
         if isinstance(tpl, str) and ("{{" in tpl or "{%" in tpl):
-            return parse(env.from_string(tpl).render(**ctx))
+            t = self._cache.get(tpl)
+            if t is None:
+                t = self._cache[tpl] = env.from_string(tpl)
+            return parse(t.render(**ctx))
         return tpl
 
 
@@ -202,8 +212,15 @@ class Notify:
             ctx[k] = self.w.render(env, v, ctx)
         return env, ctx
 
+    def choose(self):
+        return next(a["choose"] for a in self.bp["actions"] if "choose" in a)
+
+    def close_block(self):
+        """Oberster if-Block „Fenster schließen“ (zustandslos)."""
+        return next(a for a in self.bp["actions"] if "if" in a)
+
     def branch(self, trigger_id):
-        for b in self.bp["actions"][0]["choose"]:
+        for b in self.choose():
             ids = b["conditions"][0].get("id")
             ids = ids if isinstance(ids, list) else [ids]
             if trigger_id in ids:
