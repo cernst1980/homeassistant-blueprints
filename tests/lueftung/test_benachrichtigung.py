@@ -66,9 +66,9 @@ def _bestaetigung(n, entity, eigen_ts):
     n.variables(seq[2], env, c)
     if n.w.render(env, seq[3]["value_template"], c) is not True:
         return ("nicht_letzter", None, None)
-    if c["gemeldet"] is not True:
-        return ("aufraeumen" if n.w.render(env, seq[4]["then"][0]["if"], c) is True else "nichts", None, None)
-    n.variables(seq[4]["else"][0], env, c)
+    n.variables(seq[4], env, c)
+    if c["gemeldet"] is not True and len(c["noch"]["l"]) == 0:
+        return ("aufraeumen", None, None)
     return ("senden", c["titel"], c["text"])
 
 
@@ -198,7 +198,7 @@ def test_schliessen_erinnerung_wachsender_abstand():
             zone(w, e, "ok")
         if _schliessen(Notify(w, SENSOREN), "erinnerung")[0]:
             gesendet.append(minute)
-    assert gesendet == [10, 20, 40, 80, 160]
+    assert gesendet == [10, 20, 40, 80, 140]       # danach jede Stunde
 
 
 def test_schliessen_nicht_wenn_niemand_da_oder_ruhezeit():
@@ -206,9 +206,9 @@ def test_schliessen_nicht_wenn_niemand_da_oder_ruhezeit():
     _zwei_offen(w)
     w.devices["handy"] = ["device_tracker.handy"]
     w.set("device_tracker.handy", "not_home")
-    assert _schliessen(Notify(w, SENSOREN), "zurueck")[0] is False
+    assert _schliessen(Notify(w, SENSOREN), "nachholen")[0] is False
     w.set("device_tracker.handy", "home")
-    assert _schliessen(Notify(w, SENSOREN), "zurueck")[0] is True
+    assert _schliessen(Notify(w, SENSOREN), "nachholen")[0] is True
     w.now = int(dt.datetime(2026, 10, 11, 23, 0).timestamp())
     _zwei_offen(w)
     assert _schliessen(Notify(w, SENSOREN), "start")[0] is False
@@ -226,9 +226,9 @@ def test_lueften_erinnerung_wachsender_abstand():
         zone(w, "sensor.buero", "lueften", "CO₂ 1300 ppm", 0)
         w.states["sensor.buero"]["lc"] = start - 10 * 60     # seit 10 Min. lueften = gemeldet bei 0
         _, c = Notify(w, SENSOREN).context()
-        if c["erinnerung_faellig"] is True:
+        if c["lueften_faellig"] is True:
             gesendet.append(minute)
-    assert gesendet == [30, 60, 120, 240]
+    assert gesendet == [30, 60, 120, 240]          # danach alle 4 h
 
 
 def test_wetter_nur_wenn_es_schlechter_wird():
@@ -265,14 +265,36 @@ def test_lueften_nur_stabile_raeume_und_kein_doppelversand():
     n = Notify(w, SENSOREN)
     _, c = n.context()
     assert c["bedarf"]["liste"] == ["BUERO: CO₂ 1300 ppm", "WC: Feuchte"]
-    b = n.branch("bedarf")
+    b = n.lueften_block()
 
     def sendet(entity):
         t = trigger(entity, "ok", "lueften", tid="bedarf")
         env, c = n.context(t)
-        return all(n.w.render(env, cond, c) is True for cond in b["conditions"][1:])
+        return all(n.w.render(env, cond, c) is True for cond in b["if"][1:])
 
-    assert [sendet("sensor.buero"), sendet("sensor.wc")] == [False, True]
+    assert [sendet("sensor.buero"), sendet("sensor.wc")] == [False, True]   # Gleichstand: größte ID
+
+
+def test_zweiter_raum_kurz_danach_wird_gemeldet():
+    w = welt()
+    zone(w, "sensor.wc", "dringend", "Feuchtespitze", 0)
+    w.states["sensor.wc"]["lc"] = w.now - 30                 # 30 s früher
+    zone(w, "sensor.bad", "dringend", "Feuchtespitze", 0)    # jetzt
+    zone(w, "sensor.buero", "ok")
+    zone(w, "sensor.kino", "ok")
+    n = Notify(w, SENSOREN)
+    b = n.lueften_block()
+    t = trigger("sensor.bad", "ok", "dringend", tid="bedarf")
+    env, c = n.context(t)
+    assert all(n.w.render(env, cond, c) is True for cond in b["if"][1:])
+    assert len(c["bedarf"]["liste"]) == 2
+
+def _bericht(n):
+    b = n.branch("sensorbericht")
+    env, c = n.context({"id": "sensorbericht", "entity_id": None})
+    n.variables(b["sequence"][0], env, c)
+    return c["bericht"]
+
 
 def test_sensorbericht_meldet_schwache_batterie():
     w = welt()
@@ -280,8 +302,7 @@ def test_sensorbericht_meldet_schwache_batterie():
         zone(w, e, "ok", batterien=[])
     zone(w, "sensor.bad", "ok", batterien=["sensor.bad_batterie"])
     w.set("sensor.bad_batterie", 9, {"friendly_name": "Bad Thermometer Batterie", "device_class": "battery"})
-    _, c = Notify(w, SENSOREN).context()
-    assert "🔋 Bad Thermometer Batterie: 9 %" in c["sensorbericht"]
+    assert "🔋 Bad Thermometer Batterie: 9 %" in _bericht(Notify(w, SENSOREN))
 
 
 def _zwei_handys(w, fokus_chris="off", fokus_steffi="off"):
@@ -340,3 +361,66 @@ def test_gute_nacht_check():
     t2 = {"id": "gute_nacht", "platform": "time", "entity_id": None}
     env, c = n.context(t2)
     assert n.w.render(env, b["conditions"][2], c) is False
+
+
+def test_erinnerung_pro_raum_nicht_vom_alten_bedarf_blockiert():
+    w = welt()
+    start = int(NOW.timestamp())
+    for e in ("sensor.wc", "sensor.kino"):
+        zone(w, e, "ok")
+    zone(w, "sensor.bad", "lueften", "Feuchte", 26 * 60 + 7)       # hängt seit 26 h
+    gesendet = []
+    for minute in range(0, 130, 5):
+        w.now = start + minute * 60
+        zone(w, "sensor.buero", "dringend", "CO₂ 3000 ppm", 0)
+        w.states["sensor.buero"]["lc"] = start
+        _, c = Notify(w, SENSOREN).context()
+        if c["lueften_faellig"] is True:
+            gesendet.append(minute)
+    assert [m for m in gesendet if m in (15, 30, 60, 120)] == [15, 30, 60, 120]
+
+
+def test_weboberflaeche_auch_ohne_handy():
+    w = welt()
+    zone(w, "sensor.buero", "lueften", "CO₂ 1300 ppm", 15)
+    zone(w, "sensor.wc", "schliessen", "seit 12 Min. offen", 5)
+    zone(w, "sensor.kino", "ok")
+    zone(w, "sensor.bad", "ok")
+    w.devices["handy"] = ["device_tracker.handy"]
+    w.set("device_tracker.handy", "not_home")
+    n = Notify(w, SENSOREN)
+    blk = n.web_block()
+    env, c = n.context({"id": "bedarf", "entity_id": "sensor.buero"})
+    assert all(n.w.render(env, x, c) is not False for x in blk["if"] if isinstance(x, str))
+    n.variables(blk["then"][0], env, c)
+    assert c["web_lueften"] == "BUERO: CO₂ 1300 ppm" and c["web_schliessen"] == "WC: seit 12 Min. offen"
+    assert c["ziele_da"] == []
+
+
+def test_heimkommen_nur_an_die_ankommende_person():
+    w = welt()
+    for e in SENSOREN:
+        zone(w, e, "ok")
+    w.devices["chris"] = ["device_tracker.chris"]
+    w.devices["steffi"] = ["device_tracker.steffi"]
+    w.set("device_tracker.chris", "home", changed=w.now - 3 * 3600)
+    w.set("device_tracker.steffi", "home", changed=w.now - 5 * 60 - 10)
+    t = trigger("zone.home", "1", "2", tid="ankunft")
+    _, c = Notify(w, SENSOREN, geraete=["chris", "steffi"]).context(t)
+    assert c["ankommende"] == ["notify.mobile_app_steffi"] and c["nachhol_ziele"] == ["notify.mobile_app_steffi"]
+    # Neustart / jemand geht: keine Ankunft
+    t = trigger("zone.home", "2", "1", tid="ankunft")
+    _, c = Notify(w, SENSOREN, geraete=["chris", "steffi"]).context(t)
+    assert c["ankommende"] == []
+
+
+def test_geloeschtes_handy_wird_uebersprungen():
+    w = welt()
+    for e in SENSOREN:
+        zone(w, e, "ok")
+    w.devices["chris"] = ["device_tracker.chris"]
+    w.set("device_tracker.chris", "home")
+    n = Notify(w, SENSOREN, geraete=["chris", "alte_device_id"])
+    _, c = n.context()
+    assert c["ziele_alle"] == ["notify.mobile_app_chris"]
+    assert any("existiert nicht mehr" in x for x in _bericht(n))

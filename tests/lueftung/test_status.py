@@ -214,3 +214,64 @@ def test_nach_film_nicht_bei_heisser_feuchter_aussenluft():
     z.step(60, media_player__atv="playing", **w)
     s, a = z.step(10, media_player__atv="idle", **w)
     assert "Nach Film" not in a["grund"]
+
+
+def test_hysterese_nur_fuer_den_aktiven_grund():
+    """Nach einer Feuchtespitze darf der Raum nicht wegen 65–70 % Wandfeuchte auf „lüften“ kleben."""
+    z = zone(start=dt.datetime(2026, 1, 1, 7, 0))
+    w = dict(sensor__t_out=5, sensor__rh_out=80, sensor__t_in=21, binary_sensor__win="off")
+    z.step(1, sensor__rh_in=50, **w)
+    z.w.states["sensor.luftung_test"]["attrs"]["zuletzt_gelueftet"] = z.w.now - 5 * 3600
+    s, a = z.step(15, sensor__rh_in=50, **w)
+    assert s == "ok" and 65 <= a["wand_rf"] < 68
+    s, a = z.step(1, sensor__rh_in=72, **w)                  # Duschen
+    assert s == "dringend"
+    s, a = z.step(15, sensor__rh_in=50, **w)                 # wieder Ausgangswert, Fenster blieb zu
+    assert s == "ok", a["grund"]
+
+
+def test_feuchte_pause_nach_dem_lueften():
+    z = zone(start=dt.datetime(2026, 1, 1, 9, 0), feuchte_pause=120)
+    w = dict(sensor__t_out=5, sensor__rh_out=80, sensor__t_in=21)
+    z.step(1, binary_sensor__win="off", sensor__rh_in=64, **w)
+    z.w.states["sensor.luftung_test"]["attrs"]["zuletzt_gelueftet"] = z.w.now - 5 * 3600
+    s, a = z.step(3, binary_sensor__win="off", sensor__rh_in=64, **w)
+    assert s == "lueften" and "Feuchte, Wand" in a["grund"]
+    z.step(6, binary_sensor__win="on", sensor__rh_in=55, **w)
+    s, a = z.step(40, binary_sensor__win="off", sensor__rh_in=64, **w)   # Feuchte wieder da
+    assert s == "ok"
+    s, a = z.jump(90, binary_sensor__win="off", sensor__rh_in=64, **w)   # nach 2 h wieder erlaubt
+    assert s == "lueften"
+
+
+def test_fenstergruppe_zeit_der_gruppe():
+    z = zone(start=dt.datetime(2026, 1, 1, 12, 0))
+    w = dict(sensor__t_out=8, sensor__rh_out=80, sensor__rh_in=50, sensor__t_in=21)
+    z.w.set("binary_sensor.kueche", "off")
+    z.w.set("binary_sensor.terr", "off")
+    z.w.set("binary_sensor.win", "off", {"entity_id": ["binary_sensor.kueche", "binary_sensor.terr"]})
+    z.step(60, binary_sensor__kueche="off", binary_sensor__terr="off", **w)   # Küche seit 60 Min. unverändert
+    s, a = z.step(1, binary_sensor__win="on", binary_sensor__terr="on", **w)
+    assert s == "offen" and a["offen_min"] < 2
+
+
+def test_hohes_co2_nicht_zu_frueh_schliessen():
+    z = zone(start=dt.datetime(2026, 1, 1, 15, 0), co2="sensor.co2", messintervall=5)
+    w = dict(sensor__t_out=9.5, sensor__rh_out=70, sensor__rh_in=50, sensor__t_in=21)
+    z.step(3, binary_sensor__win="off", sensor__co2=3000, **w)
+    co2 = 3000
+    for m in range(12):
+        co2 -= 60
+        s, a = z.step(1, binary_sensor__win="on", sensor__co2=co2, **w)
+    assert co2 > 1200 and s == "offen"                     # 12 Min. offen, CO₂ noch hoch
+    s, a = z.step(20, binary_sensor__win="on", sensor__co2=co2, **w)
+    assert s == "schliessen"                               # spätestens nach 3× Maximaldauer
+
+
+def test_frost_keine_endlosschleife_bei_trockener_luft():
+    z = zone(start=dt.datetime(2026, 1, 1, 10, 0))
+    w = dict(sensor__t_out=-5, sensor__rh_out=80, sensor__t_in=21, binary_sensor__win="off")
+    z.step(1, sensor__rh_in=36, **w)
+    z.w.states["sensor.luftung_test"]["attrs"]["schimmel_stunden"] = 30
+    s, a = z.step(1, sensor__rh_in=36, **w)
+    assert s == "ok", a["grund"]

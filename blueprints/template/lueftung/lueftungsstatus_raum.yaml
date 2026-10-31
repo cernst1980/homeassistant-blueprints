@@ -377,6 +377,14 @@ blueprint:
           default: 20
           selector:
             number: { min: 0, max: 120, step: 5, unit_of_measurement: min, mode: box }
+        feuchte_pause:
+          name: Feuchte-Lüften frühestens wieder nach (Min.)
+          description: >-
+            Nach dem Lüften steigt die Feuchte (v. a. im Altbau) schnell wieder an. So lange wird wegen
+            Wandfeuchte nicht erneut zum Lüften aufgefordert – Schimmelrisiko „dringend“ gilt weiterhin.
+          default: 120
+          selector:
+            number: { min: 0, max: 480, step: 15, unit_of_measurement: min, mode: box }
         messintervall:
           name: Messintervall der Innensensoren (Min.)
           description: >-
@@ -435,6 +443,7 @@ actions:
       kuehlen_aktiv: !input kuehlen_aktiv
       kuehlen_ab: !input kuehlen_ab
       cooldown: !input cooldown
+      feuchte_pause: !input feuchte_pause
       max_alter: !input max_alter
       messintervall: !input messintervall
       annahme_zu: !input annahme_zu
@@ -483,6 +492,10 @@ actions:
   - variables:
       now_ts: "{{ as_timestamp(now()) | int }}"
       kontakt: "{{ e_win is string and e_win | length > 0 and states(e_win) not in ['unavailable', 'unknown'] }}"
+      # Zeitpunkt der letzten Fensteränderung – bei Gruppen die Gruppe selbst (expand() liefert deren Mitglieder)
+      win_lc: >-
+        {%- set w = (states.binary_sensor | selectattr('entity_id', 'eq', e_win) | list) if (e_win is string and e_win) else [] -%}
+        {{- (as_timestamp(w[0].last_changed, 0) | int) if w | length > 0 else 0 -}}
       prev: "{{ states(selbst) if selbst else 'unknown' }}"
       ts_rh_in: >-
         {%- set st = expand(e_rh_in) | first if e_rh_in else none -%}
@@ -652,8 +665,19 @@ actions:
         {{- ((rh_in - (werte | min)) | round(1)) if (werte | length > 0 and rh_in is number) else 0 -}}
 
   - variables:
+      # CO₂: aus den letzten zwei echten Messungen (Sensoren mit festem Intervall), sonst über das Vergleichsfenster
       co2_abfall: >-
-        {%- if ref is mapping and co2 is number and ref.co2 is number and now_ts > ref.t -%}
+        {%- set ns = namespace(p=[]) -%}
+        {%- for x in verlauf if x.tc is number and x.co2 is number -%}
+          {%- if ns.p | length == 0 or ns.p[-1][0] != x.tc -%}{%- set ns.p = ns.p + [[x.tc, x.co2]] -%}{%- endif -%}
+        {%- endfor -%}
+        {#- Vergleichspunkt: jüngste Messung, die mind. 0,8 Messintervalle älter ist (manche Sensoren melden öfter als sie messen) -#}
+        {%- set mind = (messintervall | int(1)) * 48 -%}
+        {%- set alt = ns.p | selectattr(0, 'le', (ns.p[-1][0] - mind) if ns.p else 0) | list -%}
+        {%- if ns.p | length >= 2 and alt | length > 0
+              and now_ts - ns.p[-1][0] <= (messintervall | int(1)) * 60 + 180 -%}
+        {{- ((alt[-1][1] - ns.p[-1][1]) / ((ns.p[-1][0] - alt[-1][0]) / 60)) | round(1) -}}
+        {%- elif ref is mapping and co2 is number and ref.co2 is number and now_ts > ref.t -%}
         {{- ((ref.co2 - co2) / ((now_ts - ref.t) / 60)) | round(1) -}}
         {%- else -%}{{- none -}}{%- endif -%}
       ah_abfall: >-
@@ -690,7 +714,7 @@ actions:
         {%- set alt = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
         {%- if not win_open -%}{{- none -}}
         {%- elif alt is number -%}{{- alt -}}
-        {%- elif kontakt -%}{{- as_timestamp((expand(e_win) | first).last_changed, now_ts) | int -}}
+        {%- elif kontakt -%}{{- win_lc if win_lc > 0 else now_ts -}}
         {%- else -%}{{- now_ts - 180 -}}{%- endif -%}
       geschlossen_seit: >-
         {%- set alt_offen = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
@@ -698,7 +722,7 @@ actions:
         {%- set war_offen = alt_offen is number and (now_ts - alt_offen) >= (grundlueftung_min | float(3)) * 60 -%}
         {%- set alt = (state_attr(selbst, 'geschlossen_seit') if selbst else none) -%}
         {%- if win_open -%}{{- none -}}
-        {%- elif war_offen -%}{{- (as_timestamp((expand(e_win) | first).last_changed, now_ts) | int) if kontakt else now_ts -}}
+        {%- elif war_offen -%}{{- (win_lc if win_lc > 0 else now_ts) if kontakt else now_ts -}}
         {%- elif alt is number and now_ts - alt < (cooldown | int) * 60 -%}{{- alt -}}
         {%- else -%}{{- none -}}{%- endif -%}
 
@@ -741,7 +765,7 @@ actions:
       zuletzt_gelueftet: >-
         {%- set alt = (state_attr(selbst, 'zuletzt_gelueftet') if selbst else none) -%}
         {%- set alt_offen = (state_attr(selbst, 'offen_seit') if selbst else none) -%}
-        {%- set schliesszeit = (as_timestamp((expand(e_win) | first).last_changed, now_ts) | int) if kontakt else now_ts -%}
+        {%- set schliesszeit = (win_lc if win_lc > 0 else now_ts) if kontakt else now_ts -%}
         {%- if win_open and offen_min >= (grundlueftung_min | float(3)) -%}{{- now_ts -}}
         {#- Gerade geschlossen: tatsächliche Öffnungsdauer prüfen (Lauf kann zwischen 3 Min. und Schließen fallen) -#}
         {%- elif not win_open and alt_offen is number and (schliesszeit - alt_offen) >= (grundlueftung_min | float(3)) * 60 -%}{{- schliesszeit -}}
@@ -829,46 +853,58 @@ actions:
   # Entscheidung
   - variables:
       ergebnis: >-
-        {%- set ns = namespace(dringend=false, gruende=[], grund='', gf=false) -%}
-        {%- set hyst = prev in ['lueften', 'dringend'] -%}
+        {%- set ns = namespace(dringend=false, gruende=[], grund='', gf=false, keys=[]) -%}
+        {#- Hysterese nur für den Grund, der vorher wirklich aktiv war (sonst „klebt“ ein Raum auf lüften) -#}
+        {%- set pk = ((state_attr(selbst, 'aktive_gruende') if selbst else none) or []) if prev in ['lueften', 'dringend'] else [] -%}
+        {%- set pk = pk if (pk is iterable and pk is not string) else [] -%}
         {%- set ah_diff = (ah_in - ah_out) if (ah_in is number and ah_out is number) else none -%}
-        {%- set trocken = ah_diff is number and ah_diff >= (ah_min_diff - (0.3 if hyst else 0)) -%}
+        {%- set h_feucht = 'wand' in pk or 'wand_d' in pk or 'spike' in pk -%}
+        {%- set trocken = ah_diff is number and ah_diff >= (ah_min_diff - (0.3 if h_feucht else 0)) -%}
+        {#- nach dem Lüften: Wandfeuchte erst nach der Feuchte-Pause wieder (außer Schimmelrisiko dringend) -#}
+        {%- set feucht_pause = zuletzt_gelueftet is number and (now_ts - zuletzt_gelueftet) < (feuchte_pause | int(0)) * 60 -%}
         {%- set blockiert = (sommer_block | float(0)) > 0 and ah_diff is number and ah_diff <= 0 - (sommer_block | float(0)) -%}
         {%- set kuehl_ab = hitze_vorkuehlen_ab if hitzetag else kuehlen_ab -%}
         {#- Eigener Kühl-Sensor (z. B. Wintergarten) zählt nur, wenn auch die Zone warm ist –
             sonst ist die Sonnenwärme willkommen (Heizsaison) -#}
-        {%- set kh = 0.5 if hyst else 0 -%}
+        {%- set kh = 0.5 if 'kuehl' in pk else 0 -%}
         {%- set kuehlen = kuehlen_aktiv and t_kuehl is number and t_in is number and t_out is number
               and t_kuehl >= kuehl_ab - kh and t_in >= kuehl_ab - (2 if e_t_kuehl else 0) - kh and t_out <= t_in - 2 + kh
               and (ah_diff is not number or ah_diff > 0 - ah_min_diff) -%}
         {%- if not win_open -%}
           {%- if co2 is number -%}
-            {%- if co2 >= co2_dringend - (100 if prev == 'dringend' else 0) -%}
+            {%- if co2 >= co2_dringend - (100 if 'co2_d' in pk else 0) -%}
               {%- set ns.dringend = true -%}
+              {%- set ns.keys = ns.keys + ['co2_d'] -%}
               {%- set ns.gruende = ns.gruende + ['CO₂ ' ~ (co2 | int) ~ ' ppm'] -%}
-            {%- elif co2 >= co2_lueften - (150 if hyst else 0) and not blockiert -%}
+            {%- elif co2 >= co2_lueften - (150 if ('co2' in pk or 'co2_d' in pk) else 0) and not blockiert -%}
+              {%- set ns.keys = ns.keys + ['co2'] -%}
               {%- set ns.gruende = ns.gruende + ['CO₂ ' ~ (co2 | int) ~ ' ppm'] -%}
             {%- endif -%}
           {%- endif -%}
           {%- if trocken and rf_wand is number -%}
             {%- set info = ' (außen ' ~ (ah_diff | round(1)) ~ ' g/m³ trockener)' -%}
             {%- set fh = ' · ' ~ (schimmel_h | round(0) | int) ~ ' Feuchtestunden' -%}
-            {%- if rf_wand >= rf_dringend - (2 if prev == 'dringend' else 0) and schimmel_h >= risiko_dringend_h -%}
+            {%- set feucht_genug = rh_in >= rf_trocken + 10 - (2 if 'wand' in pk else 0) -%}
+            {%- if rf_wand >= rf_dringend - (2 if 'wand_d' in pk else 0) and schimmel_h >= risiko_dringend_h -%}
               {%- set ns.dringend = true -%}
+              {%- set ns.keys = ns.keys + ['wand_d'] -%}
               {%- set ns.gruende = ns.gruende + ['Schimmelrisiko, Wand ' ~ rf_wand ~ ' % rF' ~ fh ~ info] -%}
+            {%- elif feucht_pause or not feucht_genug -%}
             {%- elif schimmel_h >= risiko_hoch_h and rf_wand >= rf_lueften - 10 -%}
+              {%- set ns.keys = ns.keys + ['wand'] -%}
               {%- set ns.gruende = ns.gruende + ['Dauerhaft zu feucht, Wand ' ~ rf_wand ~ ' % rF' ~ fh ~ info] -%}
-            {%- elif rf_wand >= rf_dringend -%}
-              {%- set ns.gruende = ns.gruende + ['Feuchte, Wand ' ~ rf_wand ~ ' % rF' ~ info] -%}
-            {%- elif rf_wand >= rf_lueften - (5 if hyst else 0) and rh_in >= rf_trocken + 10 -%}
+            {%- elif rf_wand >= rf_lueften - (2 if 'wand' in pk else 0) -%}
+              {%- set ns.keys = ns.keys + ['wand'] -%}
               {%- set ns.gruende = ns.gruende + ['Feuchte, Wand ' ~ rf_wand ~ ' % rF' ~ info] -%}
             {%- endif -%}
           {%- endif -%}
-          {%- if trocken and rf_anstieg >= dusch_anstieg - (3 if prev == 'dringend' else 0) -%}
+          {%- if trocken and rf_anstieg >= dusch_anstieg - (3 if 'spike' in pk else 0) -%}
             {%- set ns.dringend = true -%}
+            {%- set ns.keys = ns.keys + ['spike'] -%}
             {%- set ns.gruende = ns.gruende + ['Feuchtespitze +' ~ rf_anstieg ~ ' % rF'] -%}
           {%- endif -%}
           {%- if kuehlen -%}
+            {%- set ns.keys = ns.keys + ['kuehl'] -%}
             {%- set ns.gruende = ns.gruende + ['Kühlen, außen ' ~ t_out ~ ' °C' ~ ((' – heute bis ' ~ (tmax | round(0) | int) ~ ' °C') if hitzetag else '')] -%}
           {%- endif -%}
           {%- set seit_h = ((now_ts - zuletzt_gelueftet) / 3600) if zuletzt_gelueftet is number else 0 -%}
@@ -940,7 +976,8 @@ actions:
               {%- set ns.gruende = ns.gruende + ['Raum vorgekühlt (' ~ t_in ~ ' °C)'] -%}
             {%- endif -%}
             {#- max_min 0 = ab 18 °C außen keine Maximaldauer (kein Heizverlust, Dauerlüften ok) -#}
-            {%- if not kuehlen and max_min > 0 and offen_min >= max_min -%}
+            {#- bei noch hohem CO₂ erst nach der dreifachen Zeit (sonst „schließen“ → sofort wieder „lüften“) -#}
+            {%- if not kuehlen and max_min > 0 and offen_min >= (max_min * 3 if co2_hoch else max_min) -%}
               {%- set ns.gruende = ns.gruende + ['seit ' ~ (offen_min | int) ~ ' Min. offen'] -%}
             {%- endif -%}
             {%- if not kuehlen and t_in is number and temp_bei_oeffnung is number
@@ -969,7 +1006,7 @@ actions:
           {%- endif -%}
           {%- set status = 'schliessen' if ns.gruende | length > 0 else 'offen' -%}
         {%- endif -%}
-        {{- {'status': status, 'grund': ns.gruende | join(' · '), 'gf': ns.gf} -}}
+        {{- {'status': status, 'grund': ns.gruende | join(' · '), 'gf': ns.gf, 'akt': ns.keys} -}}
 
   # Empfehlung befolgt (für die Erledigt-Bestätigung): Fenster nach „lüften“/„dringend“ geöffnet,
   # oder bei fälliger Grundlüftung mind. grundlueftung_min offen. Bleibt bis zum nächsten Mal stehen.
@@ -1045,6 +1082,7 @@ sensor:
     geschlossen_seit: "{{ geschlossen_seit }}"
     zuletzt_gelueftet: "{{ zuletzt_gelueftet }}"
     grundlueftung_faellig: "{{ (not keine_daten) and ergebnis.gf }}"
+    aktive_gruende: "{{ ergebnis.akt }}"
     grundlueftung_seit: "{{ grundlueftung_seit }}"
     erledigt_ts: "{{ erledigt_ts }}"
     erledigt_min: "{{ erledigt_min }}"

@@ -97,8 +97,16 @@ class World:
         env = jinja2.Environment(extensions=["jinja2.ext.loopcontrols"])
         w = self
 
-        def states(e):
-            return w.states[e]["state"] if e in w.states else "unknown"
+        class _States:
+            """states('x.y') und states.<domain> (Liste der Zustände einer Domain)."""
+
+            def __call__(self, e):
+                return w.states[e]["state"] if e in w.states else "unknown"
+
+            def __getattr__(self, domain):
+                return [w.obj(e) for e in w.states if e.startswith(domain + ".")]
+
+        states = _States()
 
         def state_attr(e, k):
             return w.states[e]["attrs"].get(k) if e in w.states else None
@@ -128,10 +136,11 @@ class World:
             states=states, state_attr=state_attr, is_state=is_state, expand=expand,
             device_id=lambda e: next((d for d, l in w.devices.items() if e in l), None),
             device_entities=lambda d: w.devices.get(d, []),
-            device_attr=lambda d, k: d,
+            device_attr=lambda d, k: d if (d in w.devices or d == "handy") else None,
             today_at=lambda t: dt.datetime.combine(dt.datetime.fromtimestamp(w.now).date(),
                                                    dt.time.fromisoformat(str(t))),
             as_timestamp=as_timestamp,
+            is_number=lambda x: isinstance(x, (int, float)) or (isinstance(x, str) and x.replace('.', '', 1).lstrip('-').isdigit()),
             now=lambda: dt.datetime.fromtimestamp(w.now), timedelta=dt.timedelta, e=math.e, none=None)
         self._env = env
         self._cache = {}
@@ -215,9 +224,24 @@ class Notify:
     def choose(self):
         return next(a["choose"] for a in self.bp["actions"] if "choose" in a)
 
+    def _if_block(self, trigger_id):
+        for a in self.bp["actions"]:
+            if "if" in a:
+                c = a["if"][0] if isinstance(a["if"], list) else a["if"]
+                if isinstance(c, dict) and trigger_id in (c.get("id") or []) and "web_ui" not in str(a["if"]):
+                    return a
+        raise KeyError(trigger_id)
+
     def close_block(self):
-        """Oberster if-Block „Fenster schließen“ (zustandslos)."""
-        return next(a for a in self.bp["actions"] if "if" in a)
+        """Oberer Block „Fenster schließen“ (zustandslos)."""
+        return self._if_block("schliessen")
+
+    def lueften_block(self):
+        """Oberer Block „Jetzt lüften“."""
+        return self._if_block("bedarf")
+
+    def web_block(self):
+        return next(a for a in self.bp["actions"] if "if" in a and "web_ui" in str(a["if"]))
 
     def branch(self, trigger_id):
         for b in self.choose():

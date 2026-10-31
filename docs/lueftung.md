@@ -38,7 +38,11 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
   Sonnenwärme willkommen)
 - **Aktivitäten** (optional): z. B. 3D-Druck, Trockner – Lüftempfehlung während und kurz nach der Aktivität
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
-- **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur,
+- **Feuchte-Pause:** Nach dem Lüften wird wegen Wandfeuchte frühestens nach `feuchte_pause` (Standard 2 h) erneut
+  zum Lüften aufgefordert (im Altbau steigt die Feuchte schnell wieder an); Schimmelrisiko „dringend“ gilt immer.
+- **Hysterese** (gegen Hin- und Herspringen) gilt nur für den Grund, der vorher aktiv war.
+- **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur
+  (bei noch hohem CO₂ erst nach der dreifachen Zeit),
   Temperaturabfall, „Raumluft zu trocken“, „Außenluft feuchter“, „außen wärmer“.
   Ab 18 °C außen keine Maximaldauer und keine Plateau-Regel (kein Heizverlust – Dauerlüften erlaubt)
 - **Robustheit:** Hysterese, Pause nach dem Lüften, Plausibilitätsgrenzen, veraltete Werte,
@@ -50,10 +54,10 @@ Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklic
 
 | Nachricht | Wann | An wen | Erinnerung |
 |---|---|---|---|
-| 🪟 **Jetzt lüften** (alle Räume in einer Nachricht) | Raum 10 Min. stabil „lüften“, „dringend“ sofort; nachgeholt nach Ruhezeit, Heimkommen und Regenende | Anwesende | 30, 60, 120 … Min. („dringend“: 15, 30, 60 …) |
-| ✅ **Gelüftet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still) | – |
-| 🪟 **Fenster schließen (n)** (alle Räume) | 90 s gesammelt nach dem ersten Raum; nachgeholt nach Ruhezeit, Heimkommen, Neustart | Anwesende | 10, 20, 40, 80 … Min. |
-| ✅ **… geschlossen** | geschlossene Räume verschwinden still aus der Liste | Anwesende (still) | – |
+| 🪟 **Jetzt lüften** (alle Räume in einer Nachricht) | Raum 10 Min. stabil „lüften“, „dringend“ sofort; nachgeholt nach Aufwachen/Ruhezeit, Heimkommen, Regenende, Neustart | Anwesende, die wach sind | pro Raum: 30, 60, 120, 240 Min., dann alle 4 h („dringend“: 15, 30, 60, 120, dann alle 2 h) |
+| ✅ **Gelüftet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still); auf allen anderen Handys wird die Aufforderung entfernt | – |
+| 🪟 **Fenster schließen (n)** (alle Räume) | 90 s gesammelt nach dem ersten Raum; nachgeholt nach Aufwachen/Ruhezeit, Heimkommen, Neustart | Anwesende, die wach sind | pro Raum: 10, 20, 40, 80 Min., dann stündlich |
+| ✅ **… geschlossen** | geschlossene Räume verschwinden still aus der Liste | Anwesende (still); auf allen anderen Handys wird die Nachricht entfernt | – |
 | 🌙 **Gute Nacht – noch offen** | beim Schlafengehen (Schlafmodus an bzw. Ruhezeit-Beginn), ohne Räume mit erlaubter Nachtlüftung | wer schlafen geht (bzw. Anwesende) | – |
 | ⚠️ **Niemand zu Hause – Fenster offen** | beim Verlassen | alle | – |
 | 🌧/⛈ **Regen/Unwetter – Fenster offen** | wenn es zu regnen beginnt bzw. Unwetter/Sturm aufkommt (nicht bei jedem Wechsel rainy ↔ pouring) | Regen: Wache; Unwetter: alle Anwesenden; ist niemand da: alle | – |
@@ -70,7 +74,12 @@ Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklic
 - **Grundlüftung** meldet sich nie allein: Sie wird nur erwähnt, wenn ohnehin ein anderer Raum gelüftet werden
   muss („Bei der Gelegenheit auch: …“ – alles auf einmal); bei Regen/Unwetter entfällt sie.
   Optional: sofort oder als tägliche Sammelmeldung.
-- Erinnerungen werden zustandslos berechnet (alle 5 Min. geprüft) und überstehen Neustarts.
+- Erinnerungen werden pro Raum zustandslos berechnet (alle 5 Min. geprüft) und überstehen Neustarts;
+  ein Raum, der schon lange „lüften“ meldet, verdrängt keine Erinnerungen für neue Räume.
+- **Heimkommen / Weggehen:** Wer heimkommt, bekommt nach 5 Min. den aktuellen Stand (nur diese Person).
+  Wer weggeht, bekommt keine Aufforderungen mehr; erledigte Punkte werden trotzdem auf allen Handys entfernt.
+- **HA-Weboberfläche:** zeigt immer den aktuellen Stand („Jetzt lüften“, „Fenster schließen“) – auch wenn
+  kein Handy zu Hause ist – und räumt sich selbst auf.
 - Erledigte Nachrichten werden auf allen Geräten (und optional in der Web-UI) entfernt bzw. still ersetzt.
 
 ## Installation
@@ -107,7 +116,8 @@ Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklic
   stehen im täglichen Sensorbericht.
 - Der Sensorbericht meldet außerdem ausgefallene Einzel- und Gruppensensoren, eingeschränkte Bewertungen und
   Status-Sensoren, die nicht mehr rechnen (Template-Fehler).
-- Fällt ein Handy weg (umbenannt, App gelöscht), laufen die Benachrichtigungen an die anderen weiter.
+- Ein in der Automation gewähltes Handy, das es nicht mehr gibt (App neu installiert, Gerät gelöscht), wird
+  übersprungen und im Sensorbericht genannt. Handys ohne Standort-Tracker gelten immer als zu Hause.
 
 ## Hinweise
 
