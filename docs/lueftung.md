@@ -55,7 +55,7 @@ Grundsatz: wenige, gesammelte Nachrichten – aber Erinnerungen, solange wirklic
 | Nachricht | Wann | An wen | Erinnerung |
 |---|---|---|---|
 | 🪟 **Jetzt lüften** (alle Räume in einer Nachricht) | Raum 10 Min. stabil „lüften“, „dringend“ sofort; nachgeholt nach Aufwachen/Ruhezeit, Heimkommen, Regenende, Neustart | Anwesende, die wach sind | pro Raum: 30, 60, 120, 240 Min., dann alle 4 h („dringend“: 15, 30, 60, 120, dann alle 2 h) |
-| ✅ **Gelüftet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still); auf allen anderen Handys wird die Aufforderung entfernt | – |
+| ✅ **Lüften begonnen – Fenster geöffnet: Büro, WC …** | einige Min. nach dem letzten geöffneten Fenster der Runde; vergessene Pflicht-Räume werden genannt | Anwesende (still); auf allen anderen Handys wird die Aufforderung entfernt | – |
 | 🪟 **Fenster schließen (n)** (alle Räume) | 90 s gesammelt nach dem ersten Raum; nachgeholt nach Aufwachen/Ruhezeit, Heimkommen, Neustart | Anwesende, die wach sind | pro Raum: 10, 20, 40, 80 Min., dann stündlich |
 | ✅ **… geschlossen** | geschlossene Räume verschwinden still aus der Liste | Anwesende (still); auf allen anderen Handys wird die Nachricht entfernt | – |
 | 🌙 **Gute Nacht – noch offen** | beim Schlafengehen (Schlafmodus an bzw. Ruhezeit-Beginn), ohne Räume mit erlaubter Nachtlüftung | wer schlafen geht (bzw. Anwesende) | – |

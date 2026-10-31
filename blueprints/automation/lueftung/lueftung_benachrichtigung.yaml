@@ -1044,7 +1044,7 @@ actions:
                                 data:
                                   tag: lueftung_schliessen
 
-      # ---------- Gelüftet: nach ein paar Minuten EINE ✅-Nachricht für alle Räume der Runde ----------
+      # ---------- Lüften begonnen: nach ein paar Minuten EINE ✅-Nachricht für alle geöffneten Räume ----------
       - conditions:
           - condition: trigger
             id: befolgt
@@ -1124,9 +1124,9 @@ actions:
                 {%- endif -%}
                 {{- {'l': ns.l if (not unwetter or ns.dringend) else [], 'dringend': ns.dringend} -}}
               mit: "{{ [] if (ruhezeit or noch.l | length == 0) else bedarf.mit }}"
-              titel: "{{ '🪟 Noch zu lüften' if noch.l | length > 0 else '✅ Gelüftet' }}"
+              titel: "{{ '🪟 Noch zu lüften' if noch.l | length > 0 else '✅ Lüften begonnen' }}"
               text: >-
-                {%- if gemeldet -%}✅ {{ runde.raeume | map(attribute='raum') | reverse | join(', ') }} ({{ now().strftime('%H:%M') }}){%- endif -%}
+                {%- if gemeldet -%}✅ Fenster geöffnet: {{ runde.raeume | map(attribute='raum') | reverse | join(', ') }} ({{ now().strftime('%H:%M') }}){%- endif -%}
                 {%- if noch.l | length > 0 %}{{ '\n' if gemeldet else '' }}Noch offen:{{ '\n' }}{{ noch.l | join('\n') }}{% endif %}
                 {%- if mit | length > 0 %}{{ '\n' }}Bei der Gelegenheit auch: {{ mit | join(', ') }} (Grundlüftung){% endif %}
                 {%- if noch.l | length > 0 and (regen or unwetter) %}{{ '\n' }}{{ '⛈ Unwetter' if unwetter else '🌧 Regen' }} – kurz stoßlüften.{% endif %}

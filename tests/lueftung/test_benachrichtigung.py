@@ -82,8 +82,8 @@ def test_runde_mehrere_fenster_eine_bestaetigung():
     assert _bestaetigung(n, "sensor.buero", ts(w, 9))[0] == "nicht_letzter"
     assert _bestaetigung(n, "sensor.wc", ts(w, 7))[0] == "nicht_letzter"
     aktion, titel, text = _bestaetigung(n, "sensor.kino", ts(w, 5))
-    assert aktion == "senden" and titel == "✅ Gelüftet"
-    assert text.startswith("✅ BUERO, WC, KINO")
+    assert aktion == "senden" and titel == "✅ Lüften begonnen"
+    assert text.startswith("✅ Fenster geöffnet: BUERO, WC, KINO")
 
 
 def test_vergessener_raum_wird_genannt():
