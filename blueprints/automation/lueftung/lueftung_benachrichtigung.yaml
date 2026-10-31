@@ -30,8 +30,9 @@ blueprint:
     nur_anwesende:
       name: „Lüften“-Hinweise nur an Geräte, die zu Hause sind
       description: >-
-        „Fenster schließen“ geht an Anwesende, oder an alle, wenn niemand da ist.
-        Abwesenheits- und Wetterwarnungen gehen an alle.
+        „Fenster schließen“ und der Gute-Nacht-Check gehen immer nur an Anwesende (die wach sind).
+        Ist niemand zu Hause, kommt stattdessen einmal die Abwesenheitswarnung; nach dem Heimkommen
+        wird Offenes nachgeholt. Unwetterwarnungen gehen an alle Anwesenden, ist niemand da, an alle.
       default: true
       selector:
         boolean:
@@ -108,7 +109,10 @@ blueprint:
             - domain: [binary_sensor, input_boolean, switch]
     schlaf_fenster_von:
       name: Schlafmodus zählt ab
-      description: Ein Fokus tagsüber (z. B. Arbeiten) gilt nicht als Schlaf.
+      description: >-
+        Ein Fokus tagsüber (z. B. Arbeiten) gilt nicht als Schlaf. Großzügig wählen (Standard 20–11 Uhr):
+        Wann ihr schlaft, erkennt der Fokus selbst – das Fenster muss frühes Zubettgehen und langes
+        Ausschlafen einschließen.
       default: "20:00:00"
       selector:
         time:
