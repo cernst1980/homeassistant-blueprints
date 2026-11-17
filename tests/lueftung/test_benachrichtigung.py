@@ -506,3 +506,16 @@ def test_nina_leichte_und_dwd_dopplung_ignoriert():
     w.set("sensor.region_schweregrad_1", "moderate")
     _, c = n.context(trigger(NINA1, "off", "on", tid="warnung"))
     assert c["warn_neu"] == []
+
+
+def test_warnung_ohne_offene_fenster_keine_push():
+    w = welt()
+    zone(w, "sensor.buero", "ok")
+    n = Notify(w, SENSOREN, warn_dwd=[DWD])
+    env, c = n.context(trigger(DWD, "2", "2", dwd_attrs(), dwd_attrs(("FROST", 2, "a")), tid="warnung"))
+    b = next(x for x in n.choose() if "warn_neu" in str(x["conditions"]))
+    rep = next(a for a in b["sequence"] if "repeat" in a)["repeat"]["for_each"]
+    assert n.w.render(env, rep, c) == []
+    zone(w, "sensor.buero", "offen")
+    env, c = n.context(trigger(DWD, "2", "2", dwd_attrs(), dwd_attrs(("FROST", 2, "a")), tid="warnung"))
+    assert len(n.w.render(env, rep, c)) == 1

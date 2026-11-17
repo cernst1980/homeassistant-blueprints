@@ -941,7 +941,8 @@ actions:
           - "{{ warn_neu | length > 0 }}"
         sequence:
           - repeat:
-              for_each: "{{ warn_neu }}"
+              # nur Warnungen mit Bezug zu Fenstern: etwas ist offen oder die Meldung verlangt „Fenster zu“
+              for_each: "{{ warn_neu if (offen_alle | length > 0) else (warn_neu | selectattr('art', 'eq', 'fenster') | list) }}"
               sequence:
                 - variables:
                     w: "{{ repeat.item }}"
@@ -955,7 +956,7 @@ actions:
                     wtext: >-
                       {{ hinweis }}{% if w.bis %} Gilt bis {{ w.bis }}.{% endif %}
                       {%- if offene | length > 0 %}{{ '\n' }}Offen: {{ offene | join(', ') }}{% endif %}
-                    laut: "{{ w.quelle == 'nina' or w.stufe >= 3 or (offene | length > 0 and w.art in ['wind', 'nass', 'fenster']) }}"
+                    laut: "{{ w.quelle == 'nina' or w.stufe >= 3 or w.art in ['wind', 'nass', 'fenster'] }}"
                     wempfaenger: "{{ ziele_dringlich if (w.quelle == 'nina' or w.stufe >= 3 or ziele_da | length == 0) else ziele_wach }}"
                 - repeat:
                     for_each: "{{ wempfaenger }}"
