@@ -444,6 +444,7 @@ def dwd_attrs(*warnungen):
 
 
 def warn_ctx(w, from_attrs, to_attrs, **inputs):
+    inputs.setdefault('warn_dwd_stufe', 2)
     n = Notify(w, SENSOREN, warn_dwd=[DWD], **inputs)
     t = trigger(DWD, "2", "2", from_attrs, to_attrs, tid="warnung")
     _, c = n.context(t)
@@ -511,7 +512,7 @@ def test_nina_leichte_und_dwd_dopplung_ignoriert():
 def test_warnung_ohne_offene_fenster_keine_push():
     w = welt()
     zone(w, "sensor.buero", "ok")
-    n = Notify(w, SENSOREN, warn_dwd=[DWD])
+    n = Notify(w, SENSOREN, warn_dwd=[DWD], warn_dwd_stufe=2)
     env, c = n.context(trigger(DWD, "2", "2", dwd_attrs(), dwd_attrs(("FROST", 2, "a")), tid="warnung"))
     b = next(x for x in n.choose() if "warn_neu" in str(x["conditions"]))
     rep = next(a for a in b["sequence"] if "repeat" in a)["repeat"]["for_each"]

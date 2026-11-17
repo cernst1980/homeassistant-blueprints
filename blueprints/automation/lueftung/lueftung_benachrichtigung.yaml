@@ -192,8 +192,8 @@ blueprint:
                   integration: dwd_weather_warnings
         warn_dwd_stufe:
           name: DWD ab Warnstufe
-          description: 1 = Wetterwarnung, 2 = markant, 3 = Unwetter, 4 = extremes Unwetter.
-          default: 2
+          description: 1 = Wetterwarnung, 2 = markant, 3 = Unwetter, 4 = extremes Unwetter. Gemeldet wird nur bei offenen Fenstern.
+          default: 3
           selector:
             number: { min: 1, max: 4, step: 1, mode: box }
         warn_stichworte:
@@ -503,7 +503,7 @@ variables:
           {%- set name = t.attributes['warning_' ~ i ~ '_name'] | default('') -%}
           {%- set stufe = t.attributes['warning_' ~ i ~ '_level'] | int(0) -%}
           {%- set key = name ~ '|' ~ (t.attributes['warning_' ~ i ~ '_start'] | default('') | string) -%}
-          {%- if stufe >= (warn_dwd_stufe | int(2)) and key not in alt.k and (worte | select('in', name | lower) | list | count) > 0 -%}
+          {%- if stufe >= (warn_dwd_stufe | int(3)) and key not in alt.k and (worte | select('in', name | lower) | list | count) > 0 -%}
             {%- set n = name | lower -%}
             {%- set art = 'frost' if ('frost' in n or 'glätte' in n) else ('wind' if ('sturm' in n or 'orkan' in n or 'böen' in n) else 'nass') -%}
             {%- set ende = t.attributes['warning_' ~ i ~ '_end'] | default(none) -%}
