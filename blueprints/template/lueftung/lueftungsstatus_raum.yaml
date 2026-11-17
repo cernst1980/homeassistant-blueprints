@@ -74,6 +74,19 @@ blueprint:
                 - domain: sensor
                   device_class: temperature
 
+        aussenlage:
+          name: Außenlage (optional)
+          description: >-
+            Sensor mit den Zuständen frei / abraten / gesperrt (Warnungen, Pollen, Feinstaub, Regen).
+            „gesperrt“ (z. B. NINA, Unwetter) = Fenster geschlossen lassen bzw. schließen, auch bei hohem CO₂.
+            „abraten“ (z. B. Pollen, Regen) = Fenster geschlossen lassen bzw. schließen, außer bei „dringend“
+            oder wenn CO₂/Aktivität das Lüften erfordern. Attribute: grund, regen.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+
         tmax_heute:
           name: Tageshöchsttemperatur laut Vorhersage (optional)
           description: Sensor aus der Beispielkonfiguration („Wetter Höchstwert heute“). Aktiviert Vorkühlen an Hitzetagen.
@@ -488,6 +501,7 @@ actions:
       nacht_ende: !input nacht_ende
       nacht_min_temp: !input nacht_min_temp
       regengeschuetzt: !input regengeschuetzt
+      e_lage: !input aussenlage
       e_aktiv: !input aktivitaet
       aktiv_zustaende: !input aktiv_zustaende
       aktivitaet_name: !input aktivitaet_name
@@ -776,6 +790,21 @@ actions:
       aktiv_nachlauf: >-
         {{- (not aktiv_jetzt) and aktiv_zuletzt is number and (now_ts - aktiv_zuletzt) < (aktivitaet_nachlauf | int(0)) * 60 -}}
 
+  # Außenlage: gesperrt (hart) / abraten (weich, inkl. Regen für nicht regengeschützte Fenster)
+  - variables:
+      lage_roh: "{{ states(e_lage) if e_lage else 'frei' }}"
+      lage_regen: "{{ (state_attr(e_lage, 'regen') is true) and (not regengeschuetzt) if e_lage else false }}"
+      lage_eff: >-
+        {%- if lage_roh == 'gesperrt' -%}gesperrt
+        {%- elif lage_roh == 'abraten' or lage_regen -%}abraten
+        {%- else -%}frei{%- endif -%}
+      lage_text: >-
+        {%- set g = (state_attr(e_lage, 'grund') if e_lage else '') or '' -%}
+        {%- set t = [] -%}
+        {%- if lage_roh in ['gesperrt', 'abraten'] and g -%}{%- set t = t + [g] -%}{%- endif -%}
+        {%- if lage_regen -%}{%- set t = t + ['Regen'] -%}{%- endif -%}
+        {{- t | join(', ') or 'Außenluft' -}}
+
   # Letzte echte Lüftung (Fenster mind. grundlueftung_min offen). Erster Lauf: jetzt.
   - variables:
       zuletzt_gelueftet: >-
@@ -1024,13 +1053,34 @@ actions:
               {%- set ns.gruende = ns.gruende + ['Luft ist ausgetauscht'] -%}
             {%- endif -%}
           {%- endif -%}
+          {#- Außenlage: gesperrt → immer zu; abraten → zu, außer CO₂ oder Aktivität erfordern das Lüften -#}
+          {%- if lage_eff != 'frei' -%}
+            {%- set braucht = (co2 is number and co2 >= co2_lueften) or aktiv_jetzt -%}
+            {%- if lage_eff == 'gesperrt' or not braucht -%}
+              {%- set zusatz = (' – ' ~ ('CO₂ ' ~ (co2 | int) ~ ' ppm' if (co2 is number and co2 >= co2_lueften) else aktivitaet_name) ~ ' wird in Kauf genommen') if braucht else '' -%}
+              {%- set ns.gruende = ns.gruende + ['Außen ungünstig: ' ~ lage_text ~ zusatz] -%}
+            {%- endif -%}
+          {%- endif -%}
           {#- „Schließen“ bleibt bis zum Schließen stehen; der Grund zeigt die aktuelle Lage -#}
           {%- if prev == 'schliessen' and not dauer and ns.gruende | length == 0 -%}
             {%- set ns.gruende = [((state_attr(selbst, 'grund') if selbst else none) or 'Fenster schließen')] -%}
           {%- endif -%}
           {%- set status = 'schliessen' if ns.gruende | length > 0 else 'offen' -%}
         {%- endif -%}
-        {{- {'status': status, 'grund': ns.gruende | join(' · '), 'gf': ns.gf, 'akt': ns.keys} -}}
+        {#- Außenlage bei geschlossenem Fenster: gesperrt hält auch „dringend“ zurück, abraten nur „lüften“ -#}
+        {%- set zur = false -%}
+        {%- set grund_txt = ns.gruende | join(' · ') -%}
+        {%- if not win_open and lage_eff != 'frei' and status in ['lueften', 'dringend'] -%}
+          {%- if lage_eff == 'gesperrt' or status == 'lueften' -%}
+            {%- set zur = true -%}
+            {%- set ns.keys = [] -%}
+            {%- set grund_txt = 'Fenster geschlossen lassen: ' ~ lage_text ~ ' (sonst: ' ~ grund_txt ~ ')' -%}
+            {%- set status = 'ok' -%}
+          {%- else -%}
+            {%- set grund_txt = grund_txt ~ ' – trotz ' ~ lage_text ~ ' nur kurz lüften' -%}
+          {%- endif -%}
+        {%- endif -%}
+        {{- {'status': status, 'grund': grund_txt, 'gf': ns.gf, 'akt': ns.keys, 'zur': zur} -}}
 
   # Empfehlung befolgt (für die Erledigt-Bestätigung): Fenster nach „lüften“/„dringend“ geöffnet,
   # oder bei fälliger Grundlüftung mind. grundlueftung_min offen. Bleibt bis zum nächsten Mal stehen.
@@ -1120,5 +1170,8 @@ sensor:
     sperre_beginn: "{{ sperre_beginn }}"
     sperre_ende: "{{ sperre_ende }}"
     regengeschuetzt: "{{ regengeschuetzt }}"
+    aussenlage: "{{ lage_eff }}"
+    aussenlage_grund: "{{ lage_text if lage_eff != 'frei' else '' }}"
+    zurueckgehalten: "{{ (not keine_daten) and ergebnis.zur }}"
     schliessen_seit: "{{ schliessen_seit }}"
     verlauf: "{{ verlauf }}"

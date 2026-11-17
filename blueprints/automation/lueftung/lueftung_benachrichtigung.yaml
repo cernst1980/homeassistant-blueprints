@@ -941,8 +941,8 @@ actions:
           - "{{ warn_neu | length > 0 }}"
         sequence:
           - repeat:
-              # nur Warnungen mit Bezug zu Fenstern: etwas ist offen oder die Meldung verlangt „Fenster zu“
-              for_each: "{{ warn_neu if (offen_alle | length > 0) else (warn_neu | selectattr('art', 'eq', 'fenster') | list) }}"
+              # nur mit Fensterbezug: etwas ist offen, oder amtliche NINA-Gefahrenmeldung (immer proaktiv)
+              for_each: "{{ warn_neu if (offen_alle | length > 0) else (warn_neu | selectattr('quelle', 'eq', 'nina') | list) }}"
               sequence:
                 - variables:
                     w: "{{ repeat.item }}"

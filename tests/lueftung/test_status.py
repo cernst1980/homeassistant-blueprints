@@ -297,3 +297,58 @@ def test_co2_dringend_standard_immer():
     z = zone(co2="sensor.co2", co2_lueften=1000, co2_dringend=1500)
     s, a = z.step(3, binary_sensor__win="off", sensor__t_in=20, sensor__rh_in=50, sensor__co2=1700, **AUSSEN_WINTER)
     assert s == "dringend"
+
+
+# ---------- Außenlage (Warnungen, Pollen, Regen) ----------
+
+def lage(z, zustand, grund="Pollen: Birke mäßig", regen=False):
+    z.w.set("sensor.lage", zustand, {"grund": grund, "regen": regen})
+
+
+def test_lage_abraten_haelt_lueften_zurueck_aber_nicht_dringend():
+    z = zone(co2="sensor.co2", aussenlage="sensor.lage")
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    lage(z, "abraten")
+    s, a = z.step(3, binary_sensor__win="off", sensor__co2=1300, **w)
+    assert s == "ok" and a["zurueckgehalten"] is True
+    assert a["grund"].startswith("Fenster geschlossen lassen: Pollen")
+    s, a = z.step(1, binary_sensor__win="off", sensor__co2=1900, **w)
+    assert s == "dringend" and "trotz Pollen" in a["grund"]
+
+
+def test_lage_gesperrt_haelt_auch_dringend_zurueck():
+    z = zone(co2="sensor.co2", aussenlage="sensor.lage")
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    lage(z, "gesperrt", "NINA: Brand")
+    s, a = z.step(3, binary_sensor__win="off", sensor__co2=1900, **w)
+    assert s == "ok" and a["aussenlage"] == "gesperrt"
+
+
+def test_lage_offenes_fenster_schliessen_ausser_bei_co2_bedarf():
+    z = zone(co2="sensor.co2", aussenlage="sensor.lage")
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    z.step(3, binary_sensor__win="off", sensor__co2=700, **w)
+    z.step(3, binary_sensor__win="on", sensor__co2=700, **w)
+    lage(z, "abraten")
+    s, a = z.step(3, binary_sensor__win="on", sensor__co2=700, **w)
+    assert s == "schliessen" and "Außen ungünstig: Pollen" in a["grund"]
+    # CO₂ hoch: lüften hat Vorrang vor weicher Außenlage
+    z2 = zone(co2="sensor.co2", aussenlage="sensor.lage")
+    lage(z2, "abraten")
+    z2.step(1, binary_sensor__win="on", sensor__co2=1300, **w)
+    s, a = z2.step(1, binary_sensor__win="on", sensor__co2=1300, **w)
+    assert "Außen ungünstig" not in a["grund"]
+    # gesperrt gewinnt immer
+    lage(z2, "gesperrt", "Unwetter")
+    s, a = z2.step(1, binary_sensor__win="on", sensor__co2=1300, **w)
+    assert s == "schliessen" and "Außen ungünstig: Unwetter" in a["grund"] and "CO₂ 1300 ppm wird in Kauf genommen" in a["grund"]
+
+
+def test_lage_regen_nur_ohne_regenschutz():
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    for schutz, erwartet in ((False, True), (True, False)):
+        z = zone(co2="sensor.co2", aussenlage="sensor.lage", regengeschuetzt=schutz)
+        z.step(1, binary_sensor__win="on", sensor__co2=700, **w)
+        z.w.set("sensor.lage", "frei", {"grund": "", "regen": True})
+        s, a = z.step(1, binary_sensor__win="on", sensor__co2=700, **w)
+        assert ("Außen ungünstig: Regen" in a["grund"]) is erwartet, (schutz, s, a["grund"])
