@@ -275,3 +275,25 @@ def test_frost_keine_endlosschleife_bei_trockener_luft():
     z.w.states["sensor.luftung_test"]["attrs"]["schimmel_stunden"] = 30
     s, a = z.step(1, sensor__rh_in=36, **w)
     assert s == "ok", a["grund"]
+
+
+def test_co2_dringend_nur_im_zeitfenster():
+    """Schlafzimmer: tagsüber (leer) nur „lüften“, nachts „dringend“."""
+    w = dict(sensor__t_in=20, sensor__rh_in=50, sensor__co2=1700, **AUSSEN_WINTER)
+    kw = dict(co2="sensor.co2", co2_lueften=1000, co2_dringend=1500,
+              dringend_von="23:00:00", dringend_bis="07:00:00")
+    tag = zone(start=dt.datetime(2026, 1, 1, 10, 0), **kw)
+    s, a = tag.step(3, binary_sensor__win="off", **w)
+    assert s == "lueften" and a["grund"].startswith("CO₂ 1700")
+    nacht = zone(start=dt.datetime(2026, 1, 1, 23, 30), **kw)
+    s, a = nacht.step(3, binary_sensor__win="off", **w)
+    assert s == "dringend"
+    frueh = zone(start=dt.datetime(2026, 1, 2, 5, 0), **kw)
+    s, a = frueh.step(3, binary_sensor__win="off", **w)
+    assert s == "dringend"
+
+
+def test_co2_dringend_standard_immer():
+    z = zone(co2="sensor.co2", co2_lueften=1000, co2_dringend=1500)
+    s, a = z.step(3, binary_sensor__win="off", sensor__t_in=20, sensor__rh_in=50, sensor__co2=1700, **AUSSEN_WINTER)
+    assert s == "dringend"

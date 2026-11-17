@@ -40,6 +40,8 @@ Offene Grundrisse werden über Gruppen-Mittelwerte zu einer Zone zusammengefasst
 - **Feuchtespitzen** (Duschen, Kochen), **Hitzetage** (Vorkühlen anhand der Tagesvorhersage)
 - **Feuchte-Pause:** Nach dem Lüften wird wegen Wandfeuchte frühestens nach `feuchte_pause` (Standard 2 h) erneut
   zum Lüften aufgefordert (im Altbau steigt die Feuchte schnell wieder an); Schimmelrisiko „dringend“ gilt immer.
+- **CO₂ „dringend“ im Zeitfenster** (`dringend_von`/`dringend_bis`, optional): z. B. Schlafzimmer 23:00–07:00. Außerhalb meldet
+  hohes CO₂ nur „lüften“ (keine zeitkritische Push bei leerem Raum); Schimmelrisiko „dringend“ gilt immer.
 - **Hysterese** (gegen Hin- und Herspringen) gilt nur für den Grund, der vorher aktiv war.
 - **Beim Lüften:** Wirksamkeit über CO₂-/Feuchte-Abfallrate (Plateau), Max-Dauer nach Außentemperatur
   (bei noch hohem CO₂ erst nach der dreifachen Zeit),

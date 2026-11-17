@@ -179,6 +179,20 @@ blueprint:
           default: 1500
           selector:
             number: { min: 800, max: 3000, step: 50, unit_of_measurement: ppm, mode: box }
+        dringend_von:
+          name: CO₂ „dringend“ nur von (Uhrzeit)
+          description: >-
+            Zeitfenster, in dem CO₂ „dringend“ (zeitkritische Meldung) gemeldet wird. Außerhalb meldet der Raum
+            bei hohem CO₂ nur „lüften“. Für Räume, die tagsüber leer sind (z. B. Schlafzimmer: 23:00–07:00).
+            Von = Bis (Standard) bedeutet: immer. Schimmelrisiko „dringend“ gilt unabhängig davon immer.
+          default: "00:00:00"
+          selector:
+            time:
+        dringend_bis:
+          name: CO₂ „dringend“ nur bis (Uhrzeit)
+          default: "00:00:00"
+          selector:
+            time:
         co2_ziel:
           name: CO₂ Zielwert beim Lüften (ppm)
           default: 650
@@ -432,6 +446,8 @@ actions:
       f_rsi: !input f_rsi
       co2_lueften: !input co2_lueften
       co2_dringend: !input co2_dringend
+      dringend_von: !input dringend_von
+      dringend_bis: !input dringend_bis
       co2_ziel: !input co2_ziel
       rf_lueften: !input rf_lueften
       rf_dringend: !input rf_dringend
@@ -797,6 +813,14 @@ actions:
         {%- elif b < e -%}{{- n >= b and n < e -}}
         {%- else -%}{{- false -}}{%- endif -%}
       dauer_vorher: "{{ (state_attr(selbst, 'dauer') if selbst else false) is true }}"
+      # CO₂-„dringend“ nur im Zeitfenster (von = bis: immer)
+      dringend_zeit: >-
+        {%- set n = now().strftime('%H:%M:%S') -%}
+        {%- set b = dringend_von | string -%}
+        {%- set e = dringend_bis | string -%}
+        {%- if b == e -%}{{- true -}}
+        {%- elif b > e -%}{{- n >= b or n < e -}}
+        {%- else -%}{{- n >= b and n < e -}}{%- endif -%}
       nacht_ende_ts: >-
         {%- set e = as_timestamp(today_at(nacht_ende | string)) | int -%}
         {{- e if e <= now_ts else e - 86400 -}}
@@ -872,7 +896,7 @@ actions:
               and (ah_diff is not number or ah_diff > 0 - ah_min_diff) -%}
         {%- if not win_open -%}
           {%- if co2 is number -%}
-            {%- if co2 >= co2_dringend - (100 if 'co2_d' in pk else 0) -%}
+            {%- if co2 >= co2_dringend - (100 if 'co2_d' in pk else 0) and dringend_zeit -%}
               {%- set ns.dringend = true -%}
               {%- set ns.keys = ns.keys + ['co2_d'] -%}
               {%- set ns.gruende = ns.gruende + ['CO₂ ' ~ (co2 | int) ~ ' ppm'] -%}
