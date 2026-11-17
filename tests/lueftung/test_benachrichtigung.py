@@ -231,31 +231,6 @@ def test_lueften_erinnerung_wachsender_abstand():
     assert gesendet == [30, 60, 120, 240]          # danach alle 4 h
 
 
-def test_wetter_nur_wenn_es_schlechter_wird():
-    w = welt()
-    zone(w, "sensor.buero", "offen")
-    for e in ("sensor.wc", "sensor.kino", "sensor.bad"):
-        zone(w, e, "ok")
-    b = None
-    for x in Notify(w, SENSOREN).choose():
-        if x["conditions"][0].get("id") == "wetter" and "offen_wetter" in str(x["conditions"]):
-            b = x
-    assert b is not None
-
-    def feuert(von, nach, wind_von=0, wind_nach=0):
-        w.set("weather.home", nach, {"wind_speed": wind_nach})
-        n = Notify(w, SENSOREN)
-        t = trigger("weather.home", von, nach, from_attrs={"wind_speed": wind_von},
-                    to_attrs={"wind_speed": wind_nach}, tid="wetter")
-        env, c = n.context(t)
-        return all(n.w.render(env, cond, c) is True for cond in b["conditions"][1:])
-
-    assert feuert("cloudy", "rainy")
-    assert not feuert("rainy", "pouring")
-    assert feuert("cloudy", "cloudy", 10, 60)          # reiner Sturm
-    assert not feuert("cloudy", "cloudy", 60, 65)
-
-
 def test_lueften_nur_stabile_raeume_und_kein_doppelversand():
     w = welt()
     zone(w, "sensor.buero", "lueften", "CO₂ 1300 ppm", 10)

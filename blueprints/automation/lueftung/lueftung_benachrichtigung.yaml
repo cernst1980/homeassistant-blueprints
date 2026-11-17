@@ -591,13 +591,6 @@ variables:
       {%- endfor -%}
     {%- endif -%}
     {{- ns.f -}}
-  offen_wetter: >-
-    {%- set ns = namespace(l=[]) -%}
-    {%- for s in sensoren if states(s) in ['offen', 'schliessen'] and (unwetter or not state_attr(s, 'regengeschuetzt')) -%}
-      {%- set name = state_attr(s, 'raum') or state_attr(s, 'friendly_name') -%}
-      {%- set ns.l = ns.l + [name ~ (' (vermutlich offen, kein Kontakt)' if state_attr(s, 'vermutet_offen') else '')] -%}
-    {%- endfor -%}
-    {{- ns.l -}}
   offen_alle: >-
     {%- set ns = namespace(l=[]) -%}
     {%- for s in sensoren if states(s) in ['offen', 'schliessen'] -%}
@@ -890,49 +883,6 @@ actions:
                   notification_id: lueftung_abwesend
                   title: "⚠️ Niemand zu Hause – Fenster offen"
                   message: "{{ offene_fenster | join('\n') }}"
-
-      # ---------- Wetter: Regen/Unwetter bei offenen Fenstern ----------
-      - conditions:
-          - condition: trigger
-            id: wetter
-          - "{{ wetter != '' and (regen or unwetter) }}"
-          # nur, wenn es schlechter wird (auch reiner Sturm ohne Zustandswechsel), nicht bei rainy ↔ pouring
-          - >-
-            {%- set f = trigger.from_state -%}
-            {%- if f is none -%}{{- false -}}
-            {%- else -%}
-              {%- set war_uw = f.state in ['lightning', 'lightning-rainy', 'hail', 'exceptional']
-                    or (f.attributes.wind_speed | default(0) | float(0)) >= wind_max -%}
-              {%- set war_regen = f.state in ['rainy', 'pouring', 'snowy-rainy', 'lightning-rainy', 'snowy'] -%}
-              {{- (unwetter and not war_uw) or (regen and not war_regen and not war_uw) -}}
-            {%- endif -%}
-          - "{{ offen_wetter | length > 0 }}"
-        sequence:
-          - variables:
-              titel: "{{ '⛈ Unwetter – Fenster schließen' if unwetter else '🌧 Regen – Fenster offen' }}"
-              text: "{{ offen_wetter | join('\n') }}"
-              # Unwetter weckt auf, Regen nur an Wache (ist niemand da: an alle)
-              empfaenger: >-
-                {{- ziele_dringlich if (unwetter or ziele_da | length == 0) else ziele_wach -}}
-          - repeat:
-              for_each: "{{ empfaenger }}"
-              sequence:
-                - action: "{{ repeat.item }}"
-                  continue_on_error: true
-                  data:
-                    title: "{{ titel }}"
-                    message: "{{ text }}"
-                    data:
-                      tag: lueftung_wetter
-                      push:
-                        interruption-level: time-sensitive
-          - if: "{{ web_ui }}"
-            then:
-              - action: persistent_notification.create
-                data:
-                  notification_id: lueftung_wetter
-                  title: "{{ titel }}"
-                  message: "{{ text }}"
 
       # ---------- Amtliche Warnungen (DWD/NINA) ----------
       - conditions:
