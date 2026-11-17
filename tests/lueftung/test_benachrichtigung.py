@@ -424,3 +424,85 @@ def test_geloeschtes_handy_wird_uebersprungen():
     _, c = n.context()
     assert c["ziele_alle"] == ["notify.mobile_app_chris"]
     assert any("existiert nicht mehr" in x for x in _bericht(n))
+
+
+# ---------- Amtliche Warnungen (DWD / NINA) ----------
+
+DWD = "sensor.dwd_warnstufe"
+NINA1 = "binary_sensor.region_warnung_1"
+
+
+def dwd_attrs(*warnungen):
+    a = {"warning_count": len(warnungen)}
+    for i, (name, stufe, start) in enumerate(warnungen, 1):
+        a[f"warning_{i}_name"] = name
+        a[f"warning_{i}_level"] = stufe
+        a[f"warning_{i}_start"] = start
+        a[f"warning_{i}_headline"] = f"Amtliche WARNUNG vor {name}"
+        a[f"warning_{i}_end"] = NOW + dt.timedelta(hours=10)
+    return a
+
+
+def warn_ctx(w, from_attrs, to_attrs, **inputs):
+    n = Notify(w, SENSOREN, warn_dwd=[DWD], **inputs)
+    t = trigger(DWD, "2", "2", from_attrs, to_attrs, tid="warnung")
+    _, c = n.context(t)
+    return c
+
+
+def test_dwd_neue_warnung_wird_gemeldet():
+    w = welt()
+    zone(w, "sensor.buero", "ok")
+    alt = dwd_attrs()
+    neu = dwd_attrs(("FROST", 2, "2026-10-12T00:00"))
+    c = warn_ctx(w, alt, neu)
+    assert [x["name"] for x in c["warn_neu"]] == ["FROST"]
+    assert c["warn_neu"][0]["art"] == "frost"
+
+
+def test_dwd_bekannte_warnung_nicht_doppelt():
+    w = welt()
+    a = dwd_attrs(("STARKREGEN", 2, "2026-10-12T00:00"))
+    c = warn_ctx(w, a, dict(a, last_update="x"))
+    assert c["warn_neu"] == []
+
+
+def test_dwd_unter_stufe_und_fremdes_stichwort_ignoriert():
+    w = welt()
+    neu = dwd_attrs(("FROST", 1, "a"), ("NEBEL", 3, "b"))
+    c = warn_ctx(w, dwd_attrs(), neu)
+    assert c["warn_neu"] == []
+
+
+def test_dwd_sturm_ist_wind_und_stufe_regelt_empfaenger():
+    w = welt()
+    neu = dwd_attrs(("STURMBÖEN", 3, "a"))
+    c = warn_ctx(w, dwd_attrs(), neu)
+    assert c["warn_neu"][0]["art"] == "wind"
+    assert c["warn_neu"][0]["stufe"] == 3
+
+
+def test_nina_schwere_warnung_mit_fenster_hinweis():
+    w = welt()
+    w.set(NINA1, "on", {"id": "mowas.123", "description": "Bitte Fenster und Türen schließen."})
+    w.set("sensor.region_schweregrad_1", "severe")
+    w.set("sensor.region_uberschrift_1", "Brand: Rauchentwicklung")
+    n = Notify(w, SENSOREN, warn_nina=[NINA1])
+    _, c = n.context(trigger(NINA1, "off", "on", tid="warnung"))
+    assert len(c["warn_neu"]) == 1
+    assert c["warn_neu"][0]["art"] == "fenster"
+    assert c["warn_neu"][0]["quelle"] == "nina"
+
+
+def test_nina_leichte_und_dwd_dopplung_ignoriert():
+    w = welt()
+    w.set(NINA1, "on", {"id": "dwd.2.49.0"})
+    w.set("sensor.region_schweregrad_1", "severe")
+    w.set("sensor.region_uberschrift_1", "Amtliche WARNUNG vor STURMBÖEN")
+    n = Notify(w, SENSOREN, warn_nina=[NINA1], warn_dwd=[DWD])
+    _, c = n.context(trigger(NINA1, "off", "on", tid="warnung"))
+    assert c["warn_neu"] == []
+    w.set(NINA1, "on", {"id": "mowas.1"})
+    w.set("sensor.region_schweregrad_1", "moderate")
+    _, c = n.context(trigger(NINA1, "off", "on", tid="warnung"))
+    assert c["warn_neu"] == []

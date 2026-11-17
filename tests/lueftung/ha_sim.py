@@ -126,6 +126,7 @@ class World:
             except Exception:
                 return default
 
+        env.filters["as_timestamp"] = as_timestamp
         env.tests["is_state"] = is_state
         env.tests["is_state_attr"] = lambda e, k, v: state_attr(e, k) == v
         env.tests["match"] = lambda v, p: re.match(p, v) is not None

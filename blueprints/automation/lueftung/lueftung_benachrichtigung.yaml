@@ -175,6 +175,60 @@ blueprint:
       default: 50
       selector:
         number: { min: 20, max: 120, step: 5, unit_of_measurement: km/h, mode: box }
+    warnungen:
+      name: Amtliche Warnungen (optional)
+      collapsed: true
+      input:
+        warn_dwd:
+          name: DWD-Warnstufe-Sensor
+          description: >-
+            Sensor „Aktuelle Warnstufe“ der Integration Deutscher Wetterdienst (dwd_weather_warnings).
+            Leer = keine DWD-Warnungen.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  integration: dwd_weather_warnings
+        warn_dwd_stufe:
+          name: DWD ab Warnstufe
+          description: 1 = Wetterwarnung, 2 = markant, 3 = Unwetter, 4 = extremes Unwetter.
+          default: 2
+          selector:
+            number: { min: 1, max: 4, step: 1, mode: box }
+        warn_stichworte:
+          name: DWD-Ereignisse (Stichworte, kommagetrennt)
+          description: Nur Warnungen, deren Ereignis eines dieser Wörter enthält (z. B. Frost, Starkregen, Glätte).
+          default: "Frost, Starkregen, Glätte, Gewitter, Hagel, Sturm, Orkan, Schnee"
+          selector:
+            text:
+        warn_nina:
+          name: NINA-Warnungen
+          description: Warnungen der Integration NINA (Bevölkerungsschutz, z. B. „Fenster und Türen schließen“).
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                  integration: nina
+        warn_nina_stufe:
+          name: NINA ab Schweregrad
+          default: severe
+          selector:
+            select:
+              options:
+                - { value: minor, label: gering }
+                - { value: moderate, label: mäßig }
+                - { value: severe, label: schwer }
+                - { value: extreme, label: extrem }
+        warn_nina_dwd_ignorieren:
+          name: DWD-Meldungen in NINA ignorieren
+          description: NINA liefert auch DWD-Warnungen; bei gesetztem DWD-Sensor wären sie doppelt.
+          default: true
+          selector:
+            boolean:
+
     sensorbericht_zeit:
       name: Täglicher Sensorbericht um
       description: >-
@@ -301,6 +355,13 @@ triggers:
     entity_id: !input wetter
     id: wetter
   - trigger: state
+    entity_id: !input warn_dwd
+    id: warnung
+  - trigger: state
+    entity_id: !input warn_nina
+    to: "on"
+    id: warnung
+  - trigger: state
     entity_id: !input sensoren
     to: keine_daten
     for:
@@ -417,6 +478,56 @@ variables:
     {%- elif regen -%}🌧 Regen – kurz stoßlüften, Fensterbank im Blick behalten.
     {%- endif -%}
 
+  # ---- Amtliche Warnungen (DWD / NINA): nur neue Meldungen dieses Triggers ----
+  warn_dwd_in: !input warn_dwd
+  warn_dwd: "{{ warn_dwd_in if warn_dwd_in is string else ((warn_dwd_in | first) if warn_dwd_in | length > 0 else '') }}"
+  warn_dwd_stufe: !input warn_dwd_stufe
+  warn_nina_liste: !input warn_nina
+  warn_stichworte: !input warn_stichworte
+  warn_nina_stufe: !input warn_nina_stufe
+  warn_nina_dwd_ignorieren: !input warn_nina_dwd_ignorieren
+  warn_neu: >-
+    {%- set ns = namespace(l=[]) -%}
+    {%- if trigger is defined and trigger.id == 'warnung' and trigger.to_state is not none -%}
+      {%- set t = trigger.to_state -%}
+      {%- set f = trigger.from_state -%}
+      {%- if warn_dwd != '' and trigger.entity_id == warn_dwd -%}
+        {%- set worte = warn_stichworte.split(',') | map('trim') | map('lower') | reject('eq', '') | list -%}
+        {%- set alt = namespace(k=[]) -%}
+        {%- if f is not none -%}
+          {%- for i in range(1, ((f.attributes.warning_count | int(0)) + 1)) -%}
+            {%- set alt.k = alt.k + [(f.attributes['warning_' ~ i ~ '_name'] | default('')) ~ '|' ~ (f.attributes['warning_' ~ i ~ '_start'] | default('') | string)] -%}
+          {%- endfor -%}
+        {%- endif -%}
+        {%- for i in range(1, ((t.attributes.warning_count | int(0)) + 1)) -%}
+          {%- set name = t.attributes['warning_' ~ i ~ '_name'] | default('') -%}
+          {%- set stufe = t.attributes['warning_' ~ i ~ '_level'] | int(0) -%}
+          {%- set key = name ~ '|' ~ (t.attributes['warning_' ~ i ~ '_start'] | default('') | string) -%}
+          {%- if stufe >= (warn_dwd_stufe | int(2)) and key not in alt.k and (worte | select('in', name | lower) | list | count) > 0 -%}
+            {%- set n = name | lower -%}
+            {%- set art = 'frost' if ('frost' in n or 'glätte' in n) else ('wind' if ('sturm' in n or 'orkan' in n or 'böen' in n) else 'nass') -%}
+            {%- set ende = t.attributes['warning_' ~ i ~ '_end'] | default(none) -%}
+            {%- set ns.l = ns.l + [{
+                'quelle': 'dwd', 'art': art, 'stufe': stufe, 'name': name,
+                'titel': '⚠️ ' ~ (t.attributes['warning_' ~ i ~ '_headline'] | default(name)),
+                'bis': (ende | as_timestamp | timestamp_custom('%d.%m. %H:%M')) if ende else ''}] -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- elif trigger.entity_id in warn_nina_liste -%}
+        {%- set rang = {'minor': 1, 'moderate': 2, 'severe': 3, 'extreme': 4} -%}
+        {%- set sev = states(trigger.entity_id | replace('binary_sensor.', 'sensor.') | replace('_warnung_', '_schweregrad_')) -%}
+        {%- set kopf = states(trigger.entity_id | replace('binary_sensor.', 'sensor.') | replace('_warnung_', '_uberschrift_')) -%}
+        {%- set wid = state_attr(trigger.entity_id, 'id') | string -%}
+        {%- set fremd = warn_nina_dwd_ignorieren and warn_dwd != '' and wid.startswith('dwd.') -%}
+        {%- if not fremd and rang.get(sev, 0) >= rang.get(warn_nina_stufe, 3) -%}
+          {%- set txt = (kopf ~ ' ' ~ (state_attr(trigger.entity_id, 'description') | default('')) ~ ' ' ~ (state_attr(trigger.entity_id, 'recommended_actions') | default(''))) | lower -%}
+          {%- set ns.l = ns.l + [{
+              'quelle': 'nina', 'art': ('fenster' if 'fenster' in txt else 'nina'), 'stufe': rang.get(sev, 0), 'name': kopf,
+              'titel': '🚨 ' ~ kopf, 'bis': ''}] -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endif -%}
+    {{- ns.l -}}
   # ---- Raumlisten ----
   bedarf: &bedarf >-
     {%- set ns = namespace(l=[], mit=[], dringend=false) -%}
@@ -822,6 +933,49 @@ actions:
                   notification_id: lueftung_wetter
                   title: "{{ titel }}"
                   message: "{{ text }}"
+
+      # ---------- Amtliche Warnungen (DWD/NINA) ----------
+      - conditions:
+          - condition: trigger
+            id: warnung
+          - "{{ warn_neu | length > 0 }}"
+        sequence:
+          - repeat:
+              for_each: "{{ warn_neu }}"
+              sequence:
+                - variables:
+                    w: "{{ repeat.item }}"
+                    offene: "{{ offen_alle }}"
+                    hinweis: >-
+                      {%- if w.art == 'fenster' -%}Bitte Fenster und Türen schließen und Lüftung aus.
+                      {%- elif w.art == 'nina' -%}Amtliche Gefahrenmeldung – Hinweise der Behörden beachten.
+                      {%- elif w.art == 'frost' -%}Frost/Glätte – Fenster geschlossen halten, Leitungen und Außenbereich sichern.
+                      {%- elif w.art == 'wind' -%}Sturm – Fenster schließen, Lose Gegenstände sichern.
+                      {%- else -%}Unwetter – Fenster schließen, nur wenn nötig kurz lüften.{%- endif -%}
+                    wtext: >-
+                      {{ hinweis }}{% if w.bis %} Gilt bis {{ w.bis }}.{% endif %}
+                      {%- if offene | length > 0 %}{{ '\n' }}Offen: {{ offene | join(', ') }}{% endif %}
+                    laut: "{{ w.quelle == 'nina' or w.stufe >= 3 or (offene | length > 0 and w.art in ['wind', 'nass', 'fenster']) }}"
+                    wempfaenger: "{{ ziele_dringlich if (w.quelle == 'nina' or w.stufe >= 3 or ziele_da | length == 0) else ziele_wach }}"
+                - repeat:
+                    for_each: "{{ wempfaenger }}"
+                    sequence:
+                      - action: "{{ repeat.item }}"
+                        continue_on_error: true
+                        data:
+                          title: "{{ w.titel }}"
+                          message: "{{ wtext }}"
+                          data:
+                            tag: "lueftung_warnung_{{ w.name | slugify }}"
+                            push:
+                              interruption-level: "{{ 'time-sensitive' if laut else 'passive' }}"
+                - if: "{{ web_ui }}"
+                  then:
+                    - action: persistent_notification.create
+                      data:
+                        notification_id: "lueftung_warnung_{{ w.name | slugify }}"
+                        title: "{{ w.titel }}"
+                        message: "{{ wtext }}"
 
       # ---------- Zone ohne Innenwerte: sofort melden ----------
       - conditions:
