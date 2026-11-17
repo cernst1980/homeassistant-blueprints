@@ -79,8 +79,9 @@ blueprint:
           description: >-
             Sensor mit den Zuständen frei / abraten / gesperrt (Warnungen, Pollen, Feinstaub, Regen).
             „gesperrt“ (z. B. NINA, Unwetter) = Fenster geschlossen lassen bzw. schließen, auch bei hohem CO₂.
-            „abraten“ (z. B. Pollen, Regen) = Fenster geschlossen lassen bzw. schließen, außer bei „dringend“
-            oder wenn CO₂/Aktivität das Lüften erfordern. Attribute: grund, regen.
+            „abraten“ = offene Fenster schließen, außer CO₂/Aktivität erfordern das Lüften. Geschlossene bleiben zu,
+            wenn die Luft schlecht ist (Attribut luft: Pollen, Feinstaub); bei reinem Wetter (Regen, Wind) wird
+            „lüften“ mit Warnhinweis gemeldet; „dringend“ geht immer durch. Attribute: grund, regen, luft.
           default: ""
           selector:
             entity:
@@ -794,6 +795,7 @@ actions:
   - variables:
       lage_roh: "{{ states(e_lage) if e_lage else 'frei' }}"
       lage_regen: "{{ (state_attr(e_lage, 'regen') is true) and (not regengeschuetzt) if e_lage else false }}"
+      lage_luft: "{{ (state_attr(e_lage, 'luft') is true) if e_lage else false }}"
       lage_eff: >-
         {%- if lage_roh == 'gesperrt' -%}gesperrt
         {%- elif lage_roh == 'abraten' or lage_regen -%}abraten
@@ -1071,11 +1073,14 @@ actions:
         {%- set zur = false -%}
         {%- set grund_txt = ns.gruende | join(' · ') -%}
         {%- if not win_open and lage_eff != 'frei' and status in ['lueften', 'dringend'] -%}
-          {%- if lage_eff == 'gesperrt' or status == 'lueften' -%}
+          {%- if lage_eff == 'gesperrt' or (status == 'lueften' and lage_luft) -%}
             {%- set zur = true -%}
             {%- set ns.keys = [] -%}
             {%- set grund_txt = 'Fenster geschlossen lassen: ' ~ lage_text ~ ' (sonst: ' ~ grund_txt ~ ')' -%}
             {%- set status = 'ok' -%}
+          {%- elif status == 'lueften' -%}
+            {#- nur Wetter (Regen, Wind): kurzes Stoßlüften ist vertretbar, Hinweis dazu -#}
+            {%- set grund_txt = grund_txt ~ ' – Achtung: ' ~ lage_text ~ ', nur kurz lüften' -%}
           {%- else -%}
             {%- set grund_txt = grund_txt ~ ' – trotz ' ~ lage_text ~ ' nur kurz lüften' -%}
           {%- endif -%}

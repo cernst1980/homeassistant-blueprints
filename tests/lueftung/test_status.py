@@ -301,8 +301,9 @@ def test_co2_dringend_standard_immer():
 
 # ---------- Außenlage (Warnungen, Pollen, Regen) ----------
 
-def lage(z, zustand, grund="Pollen: Birke mäßig", regen=False):
-    z.w.set("sensor.lage", zustand, {"grund": grund, "regen": regen})
+def lage(z, zustand, grund="Pollen Birke mäßig", regen=False, luft=None):
+    luft = ("Pollen" in grund) if luft is None else luft
+    z.w.set("sensor.lage", zustand, {"grund": grund, "regen": regen, "luft": luft})
 
 
 def test_lage_abraten_haelt_lueften_zurueck_aber_nicht_dringend():
@@ -352,3 +353,12 @@ def test_lage_regen_nur_ohne_regenschutz():
         z.w.set("sensor.lage", "frei", {"grund": "", "regen": True})
         s, a = z.step(1, binary_sensor__win="on", sensor__co2=700, **w)
         assert ("Außen ungünstig: Regen" in a["grund"]) is erwartet, (schutz, s, a["grund"])
+
+
+def test_lage_nur_wetter_meldet_lueften_mit_warnhinweis():
+    z = zone(co2="sensor.co2", aussenlage="sensor.lage")
+    w = dict(sensor__t_in=21, sensor__rh_in=50, **AUSSEN_WINTER)
+    lage(z, "abraten", "Starker Wind 60 km/h")
+    s, a = z.step(3, binary_sensor__win="off", sensor__co2=1300, **w)
+    assert s == "lueften" and "Achtung: Starker Wind" in a["grund"]
+    assert a["zurueckgehalten"] is False
